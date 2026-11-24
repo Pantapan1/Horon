@@ -1,4 +1,4 @@
-name: Build VoxelHorizon v2.1 APK
+name: Build VoxelHorizon v3.0 APK (Rust-WASM + Studio)
 
 on:
   push:
@@ -24,11 +24,22 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install dependencies
+      - name: Setup Rust & wasm-pack
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install npm dependencies
         run: npm install
 
-      - name: Prepare www bundle (offline Three.js + PeerJS)
+      - name: Prepare www bundle
         run: npm run prepare-www
+
+      - name: Compile Rust-WASM Core (lib.rs -> www/vh_core.wasm)
+        run: wasm-pack build --release --target web --out-dir www --out-name vh_core
 
       - name: Generate Android project via Capacitor
         run: |
@@ -37,10 +48,16 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Landscape Fullscreen & Internet Permission
+      - name: Configure App Icon, Landscape Fullscreen & Storage Permissions
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="sensorLandscape"/' "$MANIFEST"
+          if [ -f "icon.png" ]; then
+            for dir in android/app/src/main/res/mipmap-*; do
+              cp -f icon.png "$dir/ic_launcher.png" || true
+              cp -f icon.png "$dir/ic_launcher_round.png" || true
+            done
+          fi
 
       - name: Build Debug APK
         run: |
@@ -48,8 +65,8 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload VoxelHorizon v2.1 APK
+      - name: Upload VoxelHorizon v3.0 APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoxelHorizon-v2.1-APK
+          name: VoxelHorizon-v3.0-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
