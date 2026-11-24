@@ -1,4 +1,4 @@
-name: Build VoxelHorizon v3.0 APK (Rust-WASM + Studio)
+name: Build VoxelHorizon v3.2 APK (Rust-WASM + Studio)
 
 on:
   push:
@@ -39,7 +39,9 @@ jobs:
         run: npm run prepare-www
 
       - name: Compile Rust-WASM Core (lib.rs -> www/vh_core.wasm)
-        run: wasm-pack build --release --target web --out-dir www --out-name vh_core
+        run: |
+          wasm-pack build --release --target web --out-dir www --out-name vh_core
+          rm -f www/.gitignore www/package.json
 
       - name: Generate Android project via Capacitor
         run: |
@@ -65,8 +67,8 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload VoxelHorizon v3.0 APK
+      - name: Upload VoxelHorizon v3.2 APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoxelHorizon-v3.0-APK
+          name: VoxelHorizon-v3.2-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
