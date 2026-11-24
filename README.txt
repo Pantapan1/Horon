@@ -1,26 +1,34 @@
 ====================================================
-  VOXELHORIZON v2.1 — ПОЛНЫЙ MODDING ENGINE (APK)
+  VOXELHORIZON v3.0 — RUST-WASM + СТУДИЯ МОДОВ (APK)
   Плоский архив без папок — готов к сборке в GitHub!
 ====================================================
 
 КАК СОБРАТЬ APK В GITHUB:
-1. Загрузите все файлы из архива в корень репозитория:
+1. Загрузите ВСЕ 14 файлов из этого архива в корень репозитория:
    index.html, style.css, textures.js, world.js, entities.js,
-   multiplayer_mods.js, game.js, package.json, capacitor.config.json, README.txt
-2. Создайте .github/workflows/build-apk.yml из файла build-apk.yml.
-3. Во вкладке Actions скачайте готовый app-debug.apk!
+   multiplayer_mods.js, studio.js, game.js, Cargo.toml, lib.rs,
+   package.json, capacitor.config.json, icon.png, README.txt
+2. Создайте в репозитории файл .github/workflows/build-apk.yml
+   и вставьте туда содержимое файла build-apk.yml из архива.
+3. Откройте вкладку Actions -> Build VoxelHorizon v3.0 APK ->
+   GitHub автоматически скомпилирует Rust-WASM ядро (lib.rs -> vh_core.wasm),
+   установит иконку приложения и соберёт app-debug.apk в Artifacts!
 
-ПОЛНЫЙ ДОСТУП ДЛЯ МОДОВ В v2.1 (VH.Mods + VH.Engine + THREE):
-Моды получают НЕОГРАНИЧЕННЫЙ доступ ко всей игре:
-- VH.Engine: прямой доступ к THREE, scene, camera, renderer, world, player,
-  mobMgr, mpMgr, physics (gravity, jumpVelocity, walkSpeed, timeScale),
-  ITEMS_DB, SKINS_DB, CRAFT_RECIPES, SMELT_RECIPES, setBlock, explodeAt и др.
-- VH.Mods.registerBlock(id, { name, color/draw, onStep, onInteract, onBreak, onPlace })
-- VH.Mods.registerItem(id, { name, color/drawIcon, dmg, onUse })
-- VH.Mods.registerMob(type, { hp, dmg, hostile, flying, buildMesh, onTick })
-- VH.Mods.registerDimension(id, { name, skyColor, fogColor, gravity, generateColumn })
-- VH.Mods.registerCommand(name, fn) / registerRecipe / registerSmelt
-- VH.Mods.ui.addHudButton / addHudWidget / showModal / closeModal
-- VH.Mods.on(event, fn): onInit, onWorldStart, onTick, onBlockBreak, onBlockPlace,
-  onBlockInteract, onItemUse, onMobSpawn, onPlayerHurt, onDimensionChange, onChat, onNetPacket
-- VH.Mods.storage.get / set (сохранение данных мода) + Импорт .js файлов с телефона!
+ЧТО НОВОГО В VOXELHORIZON v3.0:
+1. ГИБРИДНОЕ ЯДРО RUST-WASM (Cargo.toml + lib.rs):
+   - Генерация чанков на 2D/3D шуме Перлина (Обычный мир + Ад) и расчёт
+     распространения блочного света (0..15) работают в нативном WebAssembly!
+2. ВСТРОЕННАЯ СТУДИЯ МОДОВ (.VHMOD IDE — 4 ВКЛАДКИ):
+   - 1. Код и Файлы: многофайловые проекты (manifest.json, scripts/main.js,
+     textures/, models/, animations/), мобильная панель символов и консоль.
+   - 2. 2D Пиксель-Арт: 16x16 холст, зеркало X, заливка, пипетка, покадровая
+     анимация с калькой и привязка текстуры к новому Блоку или Предмету в 1 тап!
+   - 3. 3D Моделлер: живое 3D-окно Three.js, кости и кубы, размеры/повороты/цвет
+     и спавн своего 3D-моба в мир в 1 тап!
+   - 4. Анимации: таймлайн ключевых кадров (0.0с - 1.0с) для каждой кости
+     с пресетами Покоя и Вращения.
+3. НАДЁЖНОЕ ХРАНЕНИЕ, МУЛЬТИПЛЕЕР С АВТОПОДКАЧКОЙ МОДОВ И ВЫЖИВАНИЕ:
+   - IndexedDB хранилище миров без лимита 5 МБ + экспорт/импорт .vhworld и .vhmod.
+   - Выбор набора модов при создании мира + автоподкачка модов хоста при входе по сети!
+   - 27-слотовые сундуки, факелы с реальным светом в пещерах, 4 слота брони,
+     лук со стрелами, кровать (сон + спавн), ферма пшеницы и Босс Ада!

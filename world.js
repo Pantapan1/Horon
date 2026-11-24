@@ -1,5 +1,5 @@
 // ============================================================================
-// VOXELHORIZON v2.0 — НАСТОЯЩИЙ 2D/3D ШУМ ПЕРЛИНА, ОБЫЧНЫЙ МИР + АД, ТЕЧЕНИЕ ВОДЫ
+// VOXELHORIZON v3.0 — ГИБРИДНОЕ ЯДРО (RUST-WASM + JS FALLBACK), СВЕТ 0..15, СУНДУКИ
 // ============================================================================
 window.VH = window.VH || {};
 
@@ -7,7 +7,19 @@ const CHUNK_SIZE = 16;
 const WORLD_H = 64;
 const SEA_LEVEL = 22;
 
-// НАСТОЯЩИЙ ГРАДИЕНТНЫЙ ШУМ КЕНА ПЕРЛИНА (2D и 3D)
+// Асинхронная инициализация нативного Rust-WASM модуля (если скомпилирован в APK)
+VH.WasmCore = null;
+(async function initRustWasm() {
+  try {
+    const mod = await import("./vh_core.js");
+    await mod.default();
+    VH.WasmCore = mod;
+    console.log("[VoxelHorizon] Rust-WASM Core (vh_core.wasm) успешно подключён!");
+  } catch {
+    console.log("[VoxelHorizon] Запуск в автономном JS-режиме (без vh_core.wasm).");
+  }
+})();
+
 class PerlinNoise {
   constructor(seed) {
     this.p = new Uint8Array(512);
@@ -25,8 +37,7 @@ class PerlinNoise {
   lerp(t, a, b) { return a + t * (b - a); }
   grad2(hash, x, y) {
     const h = hash & 7;
-    const u = h < 4 ? x : y;
-    const v = h < 4 ? y : x;
+    const u = h < 4 ? x : y, v = h < 4 ? y : x;
     return ((h & 1) ? -u : u) + ((h & 2) ? -2.0 * v : 2.0 * v);
   }
   grad3(hash, x, y, z) {
@@ -62,10 +73,7 @@ class PerlinNoise {
   }
   fbm2(x, y, oct = 4) {
     let val = 0, amp = 0.5, freq = 1, max = 0;
-    for (let i = 0; i < oct; i++) {
-      val += this.noise2(x * freq, y * freq) * amp;
-      max += amp; amp *= 0.5; freq *= 2.03;
-    }
+    for (let i = 0; i < oct; i++) { val += this.noise2(x * freq, y * freq) * amp; max += amp; amp *= 0.5; freq *= 2.03; }
     return val / max;
   }
   hash2(x, z) {
@@ -75,20 +83,27 @@ class PerlinNoise {
 }
 
 class VoxelWorld {
-  constructor(scene, seed, dimension = "overworld", savedMods = {}) {
+  constructor(scene, seed, dimension = "overworld", savedMods = {}, savedChests = {}) {
     this.scene = scene;
     this.seed = seed;
-    this.dimension = dimension; // "overworld" | "nether"
+    this.dimension = dimension;
     this.perlin = new PerlinNoise(dimension === "nether" ? seed + 99991 : seed);
-    this.chunks = new Map();
+    this.chunks = new Map(); // "cx,cz" -> { data, light, mesh, waterMesh }
     this.modifications = Object.assign({}, savedMods);
-    this.fluidQueue = []; // { x, y, z, id, dist }
+    this.chests = Object.assign({}, savedChests); // "x,y,z" -> Array(27)
+    this.fluidQueue = [];
 
     this.solidMat = new THREE.MeshLambertMaterial({ map: VH.atlasTexture, vertexColors: true, alphaTest: 0.45 });
     this.liquidMat = new THREE.MeshLambertMaterial({ map: VH.atlasTexture, vertexColors: true, transparent: true, opacity: 0.76, side: THREE.DoubleSide });
   }
 
   key(cx, cz) { return cx + "," + cz; }
+
+  getChestItems(x, y, z) {
+    const k = Math.floor(x) + "," + Math.floor(y) + "," + Math.floor(z);
+    if (!this.chests[k]) this.chests[k] = new Array(27).fill(null);
+    return this.chests[k];
+  }
 
   getBiome(wx, wz) {
     if (this.dimension === "nether") return "nether";
@@ -115,106 +130,89 @@ class VoxelWorld {
   }
 
   generateChunkData(cx, cz) {
-    const data = new Uint8Array(CHUNK_SIZE * WORLD_H * CHUNK_SIZE);
     const idx = (x, y, z) => (y * CHUNK_SIZE + z) * CHUNK_SIZE + x;
     const baseX = cx * CHUNK_SIZE, baseZ = cz * CHUNK_SIZE;
+    let data;
 
     const customDim = VH.CUSTOM_DIMENSIONS && VH.CUSTOM_DIMENSIONS[this.dimension];
     if (customDim && typeof customDim.generateChunk === "function") {
+      data = new Uint8Array(CHUNK_SIZE * WORLD_H * CHUNK_SIZE);
       customDim.generateChunk(data, cx, cz, CHUNK_SIZE, WORLD_H, this.perlin, idx);
     } else if (customDim && typeof customDim.generateColumn === "function") {
-      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-        for (let lz = 0; lz < CHUNK_SIZE; lz++) {
-          const wx = baseX + lx, wz = baseZ + lz;
-          customDim.generateColumn(data, lx, lz, wx, wz, WORLD_H, this.perlin, idx);
-        }
+      data = new Uint8Array(CHUNK_SIZE * WORLD_H * CHUNK_SIZE);
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        customDim.generateColumn(data, lx, lz, baseX + lx, baseZ + lz, WORLD_H, this.perlin, idx);
       }
-    } else if (this.dimension === "nether") {
-      // === ИЗМЕРЕНИЕ АД (NETHER) НА 3D ШУМЕ ПЕРЛИНА ===
-      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-        for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+    } else if (VH.WasmCore && (this.dimension === "overworld" || this.dimension === "nether") && !this._hasCustomWorldgen) {
+      // Нативная генерация через скомпилированный Rust-WASM!
+      data = VH.WasmCore.generate_chunk_wasm(this.seed, this.dimension === "nether" ? 1 : 0, cx, cz);
+    } else {
+      // JS-резерв (идентичный алгоритм Перлина)
+      data = new Uint8Array(CHUNK_SIZE * WORLD_H * CHUNK_SIZE);
+      if (this.dimension === "nether") {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
           const wx = baseX + lx, wz = baseZ + lz;
           const floorH = Math.floor(15 + this.perlin.fbm2(wx * 0.035, wz * 0.035, 3) * 14);
           const ceilH  = Math.floor(46 + this.perlin.fbm2(wx * 0.03 + 77, wz * 0.03 - 44, 2) * 12);
           const isSoul = this.perlin.noise2(wx * 0.06, wz * 0.06) > 0.66;
-
           for (let y = 0; y < WORLD_H; y++) {
-            if (y === 0 || y === WORLD_H - 1) {
-              data[idx(lx, y, lz)] = 10; // Bedrock
-            } else if (y <= floorH || y >= ceilH) {
+            if (y === 0 || y === WORLD_H - 1) data[idx(lx, y, lz)] = 10;
+            else if (y <= floorH || y >= ceilH) {
               const r = this.perlin.hash2(wx * 7 + y * 19, wz * 11 - y * 13);
-              if (y === floorH && isSoul && floorH >= 18) data[idx(lx, y, lz)] = 31; // Soul Sand
-              else if (r > 0.965) data[idx(lx, y, lz)] = 33; // Quartz Ore
-              else data[idx(lx, y, lz)] = 30; // Netherrack
-            } else if (y <= 18) {
-              data[idx(lx, y, lz)] = 29; // Океан Лавы!
-            } else {
-              // 3D каменные колонны и висящие гроздья светокамня
+              if (y === floorH && isSoul && floorH >= 18) data[idx(lx, y, lz)] = 31;
+              else if (r > 0.965) data[idx(lx, y, lz)] = 33;
+              else data[idx(lx, y, lz)] = 30;
+            } else if (y <= 18) data[idx(lx, y, lz)] = 29;
+            else {
               const n3 = this.perlin.noise3(wx * 0.06, y * 0.05, wz * 0.06);
               if (n3 > 0.72) data[idx(lx, y, lz)] = 30;
-              else if (y === ceilH - 1 && this.perlin.hash2(wx * 3, wz * 5) > 0.96) data[idx(lx, y, lz)] = 23; // Glowstone!
+              else if (y === ceilH - 1 && this.perlin.hash2(wx * 3, wz * 5) > 0.96) data[idx(lx, y, lz)] = 23;
             }
           }
-          // Адские кирпичные башни-колонны
           if (Math.abs(wx % 32) <= 1 && Math.abs(wz % 32) <= 1 && floorH > 18) {
             for (let y = floorH; y < Math.min(ceilH, floorH + 10); y++) data[idx(lx, y, lz)] = 32;
           }
         }
-      }
-    } else {
-      // === ОБЫЧНЫЙ МИР НА 2D/3D ШУМЕ ПЕРЛИНА ===
-      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-        for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      } else {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
           const wx = baseX + lx, wz = baseZ + lz;
           const biome = this.getBiome(wx, wz);
           const h = this.getTerrainHeight(wx, wz);
-
           for (let y = 0; y < WORLD_H; y++) {
-            if (y === 0) {
-              data[idx(lx, y, lz)] = 10;
-            } else if (y < h - 3) {
-              // Настоящие 3D Перлин-пещеры!
+            if (y === 0) data[idx(lx, y, lz)] = 10;
+            else if (y < h - 3) {
               const cave = this.perlin.noise3(wx * 0.08, y * 0.11, wz * 0.08);
-              if (y > 4 && y < h - 4 && cave > 0.67) {
-                data[idx(lx, y, lz)] = y <= 7 ? 29 : 0; // Лава на самом дне глубоких пещер!
-              } else {
+              if (y > 4 && y < h - 4 && cave > 0.67) data[idx(lx, y, lz)] = y <= 7 ? 29 : 0;
+              else {
                 const oreR = this.perlin.hash2(wx * 5 + y * 17, wz * 7 - y * 13);
-                if (y < 14 && oreR > 0.992) data[idx(lx, y, lz)] = 14;       // Diamond
-                else if (y < 16 && biome === "mountains" && oreR > 0.986) data[idx(lx, y, lz)] = 36; // Emerald
-                else if (y < 20 && oreR > 0.982) data[idx(lx, y, lz)] = 13;  // Gold
-                else if (y < 34 && oreR > 0.960) data[idx(lx, y, lz)] = 12;  // Iron
-                else if (oreR > 0.935) data[idx(lx, y, lz)] = 11;            // Coal
+                if (y < 14 && oreR > 0.992) data[idx(lx, y, lz)] = 14;
+                else if (y < 16 && biome === "mountains" && oreR > 0.986) data[idx(lx, y, lz)] = 36;
+                else if (y < 20 && oreR > 0.982) data[idx(lx, y, lz)] = 13;
+                else if (y < 34 && oreR > 0.960) data[idx(lx, y, lz)] = 12;
+                else if (oreR > 0.935) data[idx(lx, y, lz)] = 11;
                 else data[idx(lx, y, lz)] = 3;
               }
-            } else if (y < h) {
-              data[idx(lx, y, lz)] = biome === "desert" ? 28 : (h <= SEA_LEVEL + 1 ? 8 : 2);
-            } else if (y === h) {
+            } else if (y < h) data[idx(lx, y, lz)] = biome === "desert" ? 28 : (h <= SEA_LEVEL + 1 ? 8 : 2);
+            else if (y === h) {
               if (biome === "desert" || h <= SEA_LEVEL) data[idx(lx, y, lz)] = 8;
               else if (biome === "snow" || (biome === "mountains" && h > 42)) data[idx(lx, y, lz)] = 19;
               else if (biome === "mountains" && h > 36) data[idx(lx, y, lz)] = 3;
               else data[idx(lx, y, lz)] = 1;
-            } else if (y <= SEA_LEVEL) {
-              data[idx(lx, y, lz)] = (biome === "snow" && y === SEA_LEVEL) ? 20 : 9;
-            }
+            } else if (y <= SEA_LEVEL) data[idx(lx, y, lz)] = (biome === "snow" && y === SEA_LEVEL) ? 20 : 9;
           }
-
-          // Деревья (Дуб / Берёза) и Кактусы
           if (h > SEA_LEVEL + 1 && lx >= 2 && lx <= 13 && lz >= 2 && lz <= 13) {
             const r = this.perlin.hash2(wx * 19, wz * 23);
-            if (biome === "desert" && r > 0.985) {
-              for (let cy = 1; cy <= 3; cy++) data[idx(lx, h + cy, lz)] = 21;
-            } else if ((biome === "forest" && r > 0.962) || (biome === "birch_forest" && r > 0.962) || (biome === "plains" && r > 0.992) || (biome === "snow" && r > 0.984)) {
+            if (biome === "desert" && r > 0.985) { for (let cy = 1; cy <= 3; cy++) data[idx(lx, h + cy, lz)] = 21; }
+            else if ((biome === "forest" && r > 0.962) || (biome === "birch_forest" && r > 0.962) || (biome === "plains" && r > 0.992) || (biome === "snow" && r > 0.984)) {
               const logId = biome === "birch_forest" ? 27 : 5;
               const th = 4 + ((wx + wz) & 1);
               for (let ty = 1; ty <= th; ty++) data[idx(lx, h + ty, lz)] = logId;
               for (let dy = th - 1; dy <= th + 1; dy++) {
                 const rad = dy === th + 1 ? 1 : 2;
-                for (let dx = -rad; dx <= rad; dx++) {
-                  for (let dz = -rad; dz <= rad; dz++) {
-                    if (dx === 0 && dz === 0 && dy <= th) continue;
-                    if (Math.abs(dx) === 2 && Math.abs(dz) === 2 && dy === th) continue;
-                    if (h + dy < WORLD_H) data[idx(lx + dx, h + dy, lz + dz)] = 6;
-                  }
+                for (let dx = -rad; dx <= rad; dx++) for (let dz = -rad; dz <= rad; dz++) {
+                  if (dx === 0 && dz === 0 && dy <= th) continue;
+                  if (Math.abs(dx) === 2 && Math.abs(dz) === 2 && dy === th) continue;
+                  if (h + dy < WORLD_H) data[idx(lx + dx, h + dy, lz + dz)] = 6;
                 }
               }
             }
@@ -223,7 +221,6 @@ class VoxelWorld {
       }
     }
 
-    // Применяем сохранённые изменения
     for (const [mk, bId] of Object.entries(this.modifications)) {
       const p = mk.split(",");
       const mx = +p[0], my = +p[1], mz = +p[2];
@@ -236,6 +233,49 @@ class VoxelWorld {
     return data;
   }
 
+  computeChunkLight(data) {
+    const isNether = this.dimension === "nether";
+    if (VH.WasmCore) {
+      return VH.WasmCore.compute_block_light_wasm(data, isNether);
+    }
+    const idx = (x, y, z) => (y * CHUNK_SIZE + z) * CHUNK_SIZE + x;
+    const light = new Uint8Array(CHUNK_SIZE * WORLD_H * CHUNK_SIZE);
+    const q = [];
+    for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      let sky = isNether ? 5 : 15;
+      for (let y = WORLD_H - 1; y >= 0; y--) {
+        const i = idx(lx, y, lz);
+        const b = data[i];
+        const info = VH.ITEMS_DB[b];
+        const emit = info && typeof info.light === "number" ? info.light : (info && info.light ? 14 : 0);
+        if (b !== 0 && !info?.transparent) sky = 0;
+        else if (b === 6 || b === 9 || b === 20) sky = Math.max(0, sky - 2);
+        const lv = Math.max(sky, emit);
+        light[i] = lv;
+        if (emit > 1) q.push(i);
+      }
+    }
+    let head = 0;
+    while (head < q.length) {
+      const cur = q[head++];
+      const cl = light[cur];
+      if (cl <= 1) continue;
+      const nl = cl - 1;
+      const lx = cur % CHUNK_SIZE, lz = (cur / CHUNK_SIZE | 0) % CHUNK_SIZE, y = (cur / (CHUNK_SIZE * CHUNK_SIZE)) | 0;
+      for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+        const nx = lx + dx, ny = y + dy, nz = lz + dz;
+        if (nx < 0 || nx >= CHUNK_SIZE || ny < 0 || ny >= WORLD_H || nz < 0 || nz >= CHUNK_SIZE) continue;
+        const ni = idx(nx, ny, nz);
+        const nb = data[ni];
+        if ((nb === 0 || VH.ITEMS_DB[nb]?.transparent) && light[ni] < nl) {
+          light[ni] = nl;
+          q.push(ni);
+        }
+      }
+    }
+    return light;
+  }
+
   getBlock(wx, wy, wz) {
     const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
     if (y < 0 || y >= WORLD_H) return 0;
@@ -244,6 +284,17 @@ class VoxelWorld {
     const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     return ch.data[(y * CHUNK_SIZE + lz) * CHUNK_SIZE + lx];
+  }
+
+  getLightAt(wx, wy, wz) {
+    const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
+    if (y < 0) return 2;
+    if (y >= WORLD_H) return 15;
+    const ch = this.chunks.get(this.key(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)));
+    if (!ch || !ch.light) return 15;
+    const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    return ch.light[(y * CHUNK_SIZE + lz) * CHUNK_SIZE + lx];
   }
 
   setBlock(wx, wy, wz, bId, triggerFlow = true) {
@@ -257,17 +308,16 @@ class VoxelWorld {
     ch.data[(y * CHUNK_SIZE + lz) * CHUNK_SIZE + lx] = bId;
     this.modifications[x + "," + y + "," + z] = bId;
 
+    ch.light = this.computeChunkLight(ch.data);
     this.rebuildChunkMesh(cx, cz);
     if (lx === 0) this.rebuildChunkMesh(cx - 1, cz);
     if (lx === CHUNK_SIZE - 1) this.rebuildChunkMesh(cx + 1, cz);
     if (lz === 0) this.rebuildChunkMesh(cx, cz - 1);
     if (lz === CHUNK_SIZE - 1) this.rebuildChunkMesh(cx, cz + 1);
 
-    // Динамическое течение Воды и Лавы!
     if (triggerFlow) {
-      if (bId === 9 || bId === 29) {
-        this.fluidQueue.push({ x, y, z, id: bId, dist: 3 });
-      } else if (bId === 0) {
+      if (bId === 9 || bId === 29) this.fluidQueue.push({ x, y, z, id: bId, dist: 3 });
+      else if (bId === 0) {
         for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,0,1],[0,0,-1]]) {
           const nb = this.getBlock(x + dx, y + dy, z + dz);
           if (nb === 9 || nb === 29) this.fluidQueue.push({ x: x + dx, y: y + dy, z: z + dz, id: nb, dist: 3 });
@@ -281,7 +331,6 @@ class VoxelWorld {
     const batch = this.fluidQueue.splice(0, 6);
     for (const f of batch) {
       if (this.getBlock(f.x, f.y, f.z) !== f.id) continue;
-      // Сначала течёт вниз
       if (f.y > 2 && this.getBlock(f.x, f.y - 1, f.z) === 0) {
         this.setBlock(f.x, f.y - 1, f.z, f.id, false);
         this.fluidQueue.push({ x: f.x, y: f.y - 1, z: f.z, id: f.id, dist: f.dist });
@@ -293,7 +342,7 @@ class VoxelWorld {
             this.setBlock(nx, f.y, nz, f.id, false);
             this.fluidQueue.push({ x: nx, y: f.y, z: nz, id: f.id, dist: f.dist - 1 });
           } else if ((f.id === 9 && nb === 29) || (f.id === 29 && nb === 9)) {
-            this.setBlock(nx, f.y, nz, 22, false); // Вода + Лава = Обсидиан!
+            this.setBlock(nx, f.y, nz, 22, false);
           }
         }
       }
@@ -301,12 +350,9 @@ class VoxelWorld {
   }
 
   buildNetherPortalAt(bx, by, bz) {
-    // Строит классическую обсидиановую рамку 4x5 с фиолетовым порталом внутри!
-    for (let dx = 0; dx <= 3; dx++) {
-      for (let dy = 0; dy <= 4; dy++) {
-        const isFrame = dx === 0 || dx === 3 || dy === 0 || dy === 4;
-        this.setBlock(bx + dx, by + dy, bz, isFrame ? 22 : 34, false);
-      }
+    for (let dx = 0; dx <= 3; dx++) for (let dy = 0; dy <= 4; dy++) {
+      const isFrame = dx === 0 || dx === 3 || dy === 0 || dy === 4;
+      this.setBlock(bx + dx, by + dy, bz, isFrame ? 22 : 34, false);
     }
   }
 
@@ -314,7 +360,8 @@ class VoxelWorld {
     const k = this.key(cx, cz);
     if (this.chunks.has(k)) return;
     const data = this.generateChunkData(cx, cz);
-    this.chunks.set(k, { data, mesh: null, waterMesh: null });
+    const light = this.computeChunkLight(data);
+    this.chunks.set(k, { data, light, mesh: null, waterMesh: null });
     this.rebuildChunkMesh(cx, cz);
   }
 
@@ -323,16 +370,11 @@ class VoxelWorld {
     const needed = new Set();
     let built = 0;
     for (let r = 0; r <= radius; r++) {
-      for (let dx = -r; dx <= r; dx++) {
-        for (let dz = -r; dz <= r; dz++) {
-          const cx = pcx + dx, cz = pcz + dz;
-          const k = this.key(cx, cz);
-          needed.add(k);
-          if (!this.chunks.has(k) && built < 2) {
-            this.ensureChunk(cx, cz);
-            built++;
-          }
-        }
+      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+        const cx = pcx + dx, cz = pcz + dz;
+        const k = this.key(cx, cz);
+        needed.add(k);
+        if (!this.chunks.has(k) && built < 2) { this.ensureChunk(cx, cz); built++; }
       }
     }
     for (const [k, ch] of this.chunks.entries()) {
@@ -381,6 +423,24 @@ class VoxelWorld {
           if (!info || !info.faces) continue;
 
           const wx = baseX + lx, wz = baseZ + lz;
+
+          // Особая тонкая геометрия для Факела (ID 37) и Пшеницы (ID 39)!
+          if (info.torch || info.crop) {
+            const tile = info.faces[1];
+            const u0 = (tile % VH.ATLAS_COLS) * stepU + eps, v0 = Math.floor(tile / VH.ATLAS_COLS) * stepV + eps;
+            const u1 = u0 + stepU - eps * 2, v1 = v0 + stepV - eps * 2;
+            const quads = info.torch
+              ? [[[0.44,0,0.44],[0.56,0,0.44],[0.56,0.65,0.44],[0.44,0.65,0.44]], [[0.44,0,0.56],[0.56,0,0.56],[0.56,0.65,0.56],[0.44,0.65,0.56]], [[0.44,0,0.44],[0.44,0,0.56],[0.44,0.65,0.56],[0.44,0.65,0.44]], [[0.56,0,0.44],[0.56,0,0.56],[0.56,0.65,0.56],[0.56,0.65,0.44]]]
+              : [[[0.15,0,0.15],[0.85,0,0.85],[0.85,0.85,0.85],[0.15,0.85,0.15]], [[0.85,0,0.15],[0.15,0,0.85],[0.15,0.85,0.85],[0.85,0.85,0.15]]];
+            for (const qv of quads) {
+              const vs = sPos.length / 3;
+              for (const v of qv) { sPos.push(wx + v[0], y + v[1], wz + v[2]); sNorm.push(0, 1, 0); sCol.push(1.1, 1.1, 1.1); }
+              sUv.push(u0, v1, u1, v1, u1, v0, u0, v0);
+              sIdx.push(vs, vs+1, vs+2, vs, vs+2, vs+3, vs, vs+2, vs+1, vs, vs+3, vs+2);
+            }
+            continue;
+          }
+
           const isFluidOrPortal = Boolean(info.liquid || info.portal);
 
           for (const face of FACES) {
@@ -407,11 +467,14 @@ class VoxelWorld {
             const colA = isFluidOrPortal ? wCol : sCol;
             const idxA = isFluidOrPortal ? wIdx : sIdx;
             const vStart = posA.length / 3;
-            const sh = info.light ? 1.18 : face.shade;
+
+            const lv = this.getLightAt(nx, ny, nz);
+            const lightFactor = info.light ? 1.18 : (0.18 + 0.82 * (lv / 15));
+            const sh = face.shade * lightFactor;
 
             for (let vi = 0; vi < 4; vi++) {
               const v = face.verts[vi];
-              const vy = info.liquid && v[1] === 1 ? 0.88 : v[1];
+              const vy = info.liquid && v[1] === 1 ? 0.88 : (bId === 38 && v[1] === 1 ? 0.56 : v[1]);
               posA.push(wx + v[0], y + vy, wz + v[2]);
               nrmA.push(face.dir[0], face.dir[1], face.dir[2]);
               colA.push(sh, sh, sh);

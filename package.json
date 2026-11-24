@@ -1,14 +1,17 @@
 {
   "name": "voxelhorizon",
-  "version": "2.1.0",
-  "description": "VoxelHorizon v2.1 — 3D Voxel Sandbox with Full Unrestricted JS Modding Engine, Nether, 12 Mobs, Skins & P2P Multiplayer",
+  "version": "3.0.0",
+  "description": "VoxelHorizon v3.0 — Hybrid Rust-WASM + WebGL 3D Voxel Sandbox with Full In-Game Modding Studio (Code, 2D Pixel Art, 3D Voxel Modeler, Animations), Nether, 13 Mobs & P2P Multiplayer",
   "scripts": {
-    "prepare-www": "node -e \"const fs=require('fs'); fs.mkdirSync('www',{recursive:true}); ['index.html','style.css','textures.js','world.js','entities.js','multiplayer_mods.js','game.js'].forEach(f=>fs.copyFileSync(f,'www/'+f)); fs.copyFileSync('node_modules/three/build/three.min.js','www/three.min.js'); fs.copyFileSync('node_modules/peerjs/dist/peerjs.min.js','www/peerjs.min.js'); console.log('Prepared www/ with offline Three.js & PeerJS');\""
+    "prepare-www": "node -e \"const fs=require('fs'); fs.mkdirSync('www',{recursive:true}); ['index.html','style.css','textures.js','world.js','entities.js','multiplayer_mods.js','studio.js','game.js'].forEach(f=>fs.copyFileSync(f,'www/'+f)); fs.copyFileSync('node_modules/three/build/three.min.js','www/three.min.js'); fs.copyFileSync('node_modules/peerjs/dist/peerjs.min.js','www/peerjs.min.js'); console.log('Prepared www/ bundle');\""
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.1",
     "@capacitor/cli": "^6.1.2",
     "@capacitor/core": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "@capacitor/share": "^6.0.1",
     "three": "0.149.0",
     "peerjs": "1.5.4"
   }

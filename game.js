@@ -1,17 +1,18 @@
 // ============================================================================
-// VOXELHORIZON v2.0 — ГЛАВНЫЙ ДВИЖОК (АНИМАЦИЯ РУКИ, ЧАСТИЦЫ, АД, PE УПРАВЛЕНИЕ)
+// VOXELHORIZON v3.0 — ГЛАВНЫЙ ДВИЖОК (RUST-WASM + CHESTS + ARMOR + BOW + BED + STUDIO)
 // ============================================================================
 (function () {
   "use strict";
   const $ = (id) => document.getElementById(id);
 
-  // --- РЕЦЕПТЫ КРАФТА И ПЕЧИ ---
   const CRAFT_RECIPES = [
     { out: 7,   cnt: 4, req: [[5, 1]],                desc: "1 Дуб -> 4 Доски" },
     { out: 7,   cnt: 4, req: [[27, 1]],               desc: "1 Берёза -> 4 Доски" },
     { out: 105, cnt: 4, req: [[7, 2]],                desc: "2 Доски -> 4 Палки" },
+    { out: 37,  cnt: 4, req: [[101, 1], [105, 1]],    desc: "Уголь + Палка -> 4 Факела" },
     { out: 17,  cnt: 1, req: [[7, 4]],                desc: "4 Доски -> Верстак" },
-    { out: 35,  cnt: 1, req: [[7, 8]],                desc: "8 Досок -> Сундук" },
+    { out: 35,  cnt: 1, req: [[7, 8]],                desc: "8 Досок -> Сундук (27 слотов)" },
+    { out: 38,  cnt: 1, req: [[7, 3], [2, 2]],        desc: "3 Доски + 2 Земли -> Кровать" },
     { out: 18,  cnt: 1, req: [[4, 8]],                desc: "8 Булыжника -> Печь" },
     { out: 106, cnt: 1, req: [[7, 3], [105, 2]],      desc: "3 Доски + 2 Палки" },
     { out: 107, cnt: 1, req: [[4, 3], [105, 2]],      desc: "3 Булыжника + 2 Палки" },
@@ -20,11 +21,16 @@
     { out: 111, cnt: 1, req: [[102, 2], [105, 1]],    desc: "2 Железа + 1 Палка" },
     { out: 109, cnt: 1, req: [[104, 3], [105, 2]],    desc: "3 Алмаза + 2 Палки" },
     { out: 112, cnt: 1, req: [[104, 2], [105, 1]],    desc: "2 Алмаза + 1 Палка" },
-    { out: 116, cnt: 1, req: [[102, 1], [25, 1]],     desc: "Железо + Гравий -> Огниво (Портал)" },
+    { out: 123, cnt: 1, req: [[105, 3], [118, 1]],    desc: "3 Палки + Изумруд -> Лук" },
+    { out: 124, cnt: 8, req: [[105, 1], [4, 1]],      desc: "Палка + Булыжник -> 8 Стрел" },
+    { out: 122, cnt: 1, req: [[121, 3]],              desc: "3 Семени/Пшеницы -> Хлеб" },
+    { out: 125, cnt: 1, req: [[114, 4]],              desc: "4 Кожи/Мяса -> Кожаный шлем" },
+    { out: 126, cnt: 1, req: [[102, 6]],              desc: "6 Железа -> Железный нагрудник" },
+    { out: 127, cnt: 1, req: [[102, 5]],              desc: "5 Железа -> Железные поножи" },
+    { out: 128, cnt: 1, req: [[104, 4]],              desc: "4 Алмаза -> Алмазные ботинки" },
+    { out: 116, cnt: 1, req: [[102, 1], [25, 1]],     desc: "Железо + Гравий -> Огниво" },
     { out: 119, cnt: 1, req: [[102, 3]],              desc: "3 Железа -> Ведро воды" },
     { out: 23,  cnt: 2, req: [[15, 2], [101, 1]],     desc: "2 Стекла + Уголь -> Светокамень" },
-    { out: 16,  cnt: 4, req: [[4, 4], [2, 2]],        desc: "4 Булыжника + 2 Земли -> Кирпичи" },
-    { out: 24,  cnt: 1, req: [[7, 6]],                desc: "6 Досок -> Книжная полка" },
     { out: 26,  cnt: 1, req: [[8, 4], [101, 2]],      desc: "4 Песка + 2 Угля -> Динамит" }
   ];
 
@@ -36,7 +42,6 @@
     { out: 3,   cnt: 2, req: [[4, 2], [101, 1]],      desc: "2 Булыжника + Уголь -> Камень" }
   ];
 
-  // --- ПРОЦЕДУРНЫЕ ЗВУКИ (WEB AUDIO) ---
   let audioCtx = null;
   const SETTINGS = { renderDist: 3, sens: 1.0, sound: true, ctrlMode: "dpad" };
   const PHYSICS = { gravity: 21, jumpVelocity: 7.6, walkSpeed: 5.2, flySpeed: 9.8, reach: 5.5, timeScale: 1.0 };
@@ -60,6 +65,10 @@
       } else if (type === "hit") {
         osc.type = "sawtooth"; osc.frequency.setValueAtTime(155, t); osc.frequency.exponentialRampToValueAtTime(52, t + 0.14);
         gain.gain.setValueAtTime(0.24, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+        osc.start(t); osc.stop(t + 0.15);
+      } else if (type === "bow") {
+        osc.type = "triangle"; osc.frequency.setValueAtTime(420, t); osc.frequency.exponentialRampToValueAtTime(140, t + 0.14);
+        gain.gain.setValueAtTime(0.2, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
         osc.start(t); osc.stop(t + 0.15);
       } else if (type === "portal") {
         osc.type = "sine"; osc.frequency.setValueAtTime(220, t); osc.frequency.linearRampToValueAtTime(520, t + 0.45);
@@ -95,7 +104,6 @@
     setTimeout(() => { if (div.parentNode) div.remove(); }, 10000);
   }
 
-  // --- СЦЕНА, РУКА ОТ 1-ГО ЛИЦА, АВАТАР ОТ 3-ГО ЛИЦА И ЧАСТИЦЫ ---
   let renderer, scene, camera, sunLight, ambLight, highlightBox;
   let fpArmGroup = null, playerAvatar = null;
   let atlasObj = null, voxelWorld = null, mobMgr = null, mpMgr = null;
@@ -105,9 +113,13 @@
   let worldSeed = 123456;
   let worldTime = 0.28, dayCount = 1;
   let savedDimMods = { overworld: {}, nether: {} };
+  let savedDimChests = { overworld: {}, nether: {} };
+  let selectedWorldModIds = null;
+  let pendingHostSync = null;
 
   const player = {
     x: 0.5, y: 36, z: 0.5,
+    spawnPos: null,
     vx: 0, vy: 0, vz: 0,
     yaw: 0, pitch: -0.15,
     onGround: false, flying: false, sneaking: false,
@@ -118,10 +130,20 @@
     walkBob: 0, armSwing: 0,
     selectedSlot: 0,
     skinId: localStorage.getItem("vh_skin_id") || "explorer",
+    armor: { head: 0, chest: 0, legs: 0, feet: 0 },
     inv: {}
   };
   VH.activeSkinId = player.skinId;
-  let hotbar = [106, 7, 17, 22, 116, 119, 23, 113, 26];
+  let hotbar = [108, 111, 123, 37, 35, 38, 17, 113, 26];
+
+  function getTotalArmorDef() {
+    let def = 0;
+    for (const slot of ["head", "chest", "legs", "feet"]) {
+      const id = player.armor[slot];
+      if (id && VH.ITEMS_DB[id]) def += VH.ITEMS_DB[id].armorDef || 0;
+    }
+    return def;
+  }
 
   function getActiveSkinObj() {
     return VH.SKINS_DB.find((s) => s.id === player.skinId) || VH.SKINS_DB[0];
@@ -131,10 +153,7 @@
     const s = getActiveSkinObj();
     if (fpArmGroup) camera.remove(fpArmGroup);
     fpArmGroup = new THREE.Group();
-    const armMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.22, 0.22, 0.68),
-      new THREE.MeshLambertMaterial({ color: s.skin })
-    );
+    const armMesh = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.68), new THREE.MeshLambertMaterial({ color: s.skin }));
     armMesh.position.set(0.42, -0.34, -0.58);
     armMesh.rotation.set(0.25, -0.25, 0.12);
     fpArmGroup.add(armMesh);
@@ -186,6 +205,12 @@
     mpMgr = new VH.MultiplayerManager(scene);
     mpMgr.onBlockRemote = (x, y, z, id) => { if (voxelWorld) voxelWorld.setBlock(x, y, z, id, true); };
     mpMgr.onChatRemote = (nick, txt) => addChatLine(nick, txt);
+    mpMgr.onHostModsOffered = (syncMsg) => {
+      pendingHostSync = syncMsg;
+      const cnt = (syncMsg.projects || []).length;
+      $("mp-mods-prompt-txt").textContent = `Сервер прислал сид ${syncMsg.seed} и моды (${cnt} шт.). Загрузить на сессию?`;
+      $("mp-mods-prompt").classList.remove("hidden");
+    };
 
     rebuildPlayerVisuals();
 
@@ -196,7 +221,6 @@
     });
   }
 
-  // --- ИНВЕНТАРЬ И КЛАССИЧЕСКИЙ HUD ---
   function addInv(id, cnt) {
     if (!id || cnt <= 0) return;
     player.inv[id] = (player.inv[id] || 0) + cnt;
@@ -217,19 +241,17 @@
   }
 
   function renderClassicStatusBars() {
-    const hr = $("hearts-row"), fr = $("food-row");
-    hr.innerHTML = ""; fr.innerHTML = "";
+    const hr = $("hearts-row"), fr = $("food-row"), ar = $("armor-row");
+    hr.innerHTML = ""; fr.innerHTML = ""; ar.innerHTML = "";
     const fullH = Math.ceil(player.hp / 2);
     const fullF = Math.ceil(player.food / 2);
+    const fullA = getTotalArmorDef();
     for (let i = 0; i < 10; i++) {
-      const hs = document.createElement("span");
-      hs.className = "ico-heart" + (i < fullH ? "" : " empty");
-      hs.textContent = "♥";
-      hr.appendChild(hs);
-      const fs = document.createElement("span");
-      fs.className = "ico-food" + (i < fullF ? "" : " empty");
-      fs.textContent = "🍗";
-      fr.appendChild(fs);
+      const hs = document.createElement("span"); hs.className = "ico-heart" + (i < fullH ? "" : " empty"); hs.textContent = "♥"; hr.appendChild(hs);
+      const fs = document.createElement("span"); fs.className = "ico-food" + (i < fullF ? "" : " empty"); fs.textContent = "🍗"; fr.appendChild(fs);
+      if (fullA > 0) {
+        const as = document.createElement("span"); as.className = "ico-armor" + (i < fullA ? "" : " empty"); as.textContent = "🛡"; ar.appendChild(as);
+      }
     }
   }
 
@@ -242,17 +264,13 @@
       const slot = document.createElement("div");
       slot.className = "mc-slot" + (i === player.selectedSlot ? " active" : "");
       if (id && (player.mode === "creative" || cnt > 0)) {
-        const cv = document.createElement("canvas");
-        VH.drawItemIcon(cv, id);
+        const cv = document.createElement("canvas"); VH.drawItemIcon(cv, id);
         slot.appendChild(cv);
-        const cEl = document.createElement("span");
-        cEl.className = "cnt";
-        cEl.textContent = cnt;
+        const cEl = document.createElement("span"); cEl.className = "cnt"; cEl.textContent = cnt;
         slot.appendChild(cEl);
       }
       slot.onclick = () => {
-        player.selectedSlot = i;
-        renderHotbar();
+        player.selectedSlot = i; renderHotbar();
         const nm = VH.ITEMS_DB[hotbar[i]]?.name;
         if (nm) showToast(nm);
       };
@@ -260,22 +278,20 @@
     }
   }
 
-  // --- ПЕРЕКЛЮЧЕНИЕ ИЗМЕРЕНИЙ (ОБЫЧНЫЙ МИР <-> АД!) ---
+  // --- ПЕРЕКЛЮЧЕНИЕ ИЗМЕРЕНИЙ ---
   function switchDimension(targetDim) {
     if (!voxelWorld || voxelWorld.dimension === targetDim) return;
     savedDimMods[voxelWorld.dimension] = Object.assign({}, voxelWorld.modifications);
+    savedDimChests[voxelWorld.dimension] = Object.assign({}, voxelWorld.chests);
     voxelWorld.disposeAll();
-    voxelWorld = new VH.VoxelWorld(scene, worldSeed, targetDim, savedDimMods[targetDim] || {});
+    voxelWorld = new VH.VoxelWorld(scene, worldSeed, targetDim, savedDimMods[targetDim] || {}, savedDimChests[targetDim] || {});
     mobMgr.setWorld(voxelWorld);
 
-    for (let cx = -1; cx <= 1; cx++) {
-      for (let cz = -1; cz <= 1; cz++) voxelWorld.ensureChunk(cx, cz);
-    }
+    for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) voxelWorld.ensureChunk(cx, cz);
     player.x = 2.5; player.z = 2.5;
     player.y = targetDim === "nether" ? 26.2 : voxelWorld.getTerrainHeight(2, 2) + 2.5;
     player.vx = player.vy = player.vz = 0;
 
-    // Строим безопасную площадку и обратный портал в точке прибытия!
     if (targetDim === "nether") {
       for (let dx = -2; dx <= 4; dx++) for (let dz = -2; dz <= 3; dz++) voxelWorld.setBlock(dx, 24, dz, 32, false);
       for (let dx = -2; dx <= 4; dx++) for (let dy = 25; dy <= 30; dy++) for (let dz = -2; dz <= 3; dz++) voxelWorld.setBlock(dx, dy, dz, 0, false);
@@ -288,39 +304,63 @@
     showToast(cd ? ("Измерение: " + (cd.name || targetDim)) : (targetDim === "nether" ? "Вы вошли в АД (Nether)!" : "Вы вернулись в Обычный мир!"));
   }
 
-  // --- СОХРАНЕНИЕ И ЗАГРУЗКА МИРОВ ---
-  function getSavedWorldsIndex() {
-    try { return JSON.parse(localStorage.getItem("vh2_worlds_index") || "[]"); } catch { return []; }
+  // --- INDEXEDDB СОХРАНЕНИЕ / ЗАГРУЗКА / ЭКСПОРТ МИРОВ ---
+  async function getSavedWorldsIndex() {
+    return await VH.DB.get("worlds_index", []);
   }
-  function saveCurrentWorld() {
+
+  async function saveCurrentWorld(silent = false) {
     if (!voxelWorld) return;
     savedDimMods[voxelWorld.dimension] = Object.assign({}, voxelWorld.modifications);
+    savedDimChests[voxelWorld.dimension] = Object.assign({}, voxelWorld.chests);
     const payload = {
       name: currentWorldKey, seed: worldSeed, mode: player.mode, dim: voxelWorld.dimension,
       time: worldTime, dayCount,
-      player: { x: player.x, y: player.y, z: player.z, hp: player.hp, food: player.food, inv: player.inv },
-      hotbar, dimMods: savedDimMods
+      worldModIds: selectedWorldModIds,
+      player: { x: player.x, y: player.y, z: player.z, spawnPos: player.spawnPos, hp: player.hp, food: player.food, armor: player.armor, inv: player.inv },
+      hotbar, dimMods: savedDimMods, dimChests: savedDimChests
     };
-    try {
-      localStorage.setItem("vh2_world_" + currentWorldKey, JSON.stringify(payload));
-      const idx = getSavedWorldsIndex();
-      if (!idx.includes(currentWorldKey)) { idx.unshift(currentWorldKey); localStorage.setItem("vh2_worlds_index", JSON.stringify(idx.slice(0, 8))); }
-      showToast("Мир сохранён!");
-    } catch { showToast("Ошибка сохранения"); }
+    await VH.DB.set("world_" + currentWorldKey, payload);
+    const idx = await getSavedWorldsIndex();
+    if (!idx.includes(currentWorldKey)) {
+      idx.unshift(currentWorldKey);
+      await VH.DB.set("worlds_index", idx.slice(0, 16));
+    }
+    if (!silent) showToast("Мир сохранён в IndexedDB!");
   }
 
-  function renderSavedWorldsList() {
+  async function renderWorldsModal() {
+    // Чекбоксы модов для нового мира
+    const wrap = $("world-mods-checklist");
+    wrap.innerHTML = "";
+    if (!Array.isArray(selectedWorldModIds)) {
+      selectedWorldModIds = VH.modMgr.projects.filter((p) => p.enabled).map((p) => p.id);
+    }
+    VH.modMgr.projects.forEach((p) => {
+      const chip = document.createElement("div");
+      const active = selectedWorldModIds.includes(p.id);
+      chip.className = "mod-chip" + (active ? " active" : "");
+      chip.textContent = (active ? "✓ " : "+ ") + p.name;
+      chip.onclick = () => {
+        if (selectedWorldModIds.includes(p.id)) selectedWorldModIds = selectedWorldModIds.filter((x) => x !== p.id);
+        else selectedWorldModIds.push(p.id);
+        renderWorldsModal();
+      };
+      wrap.appendChild(chip);
+    });
+
     const box = $("saved-worlds-list");
     box.innerHTML = "";
-    getSavedWorldsIndex().forEach((wn) => {
-      const row = document.createElement("div");
-      row.className = "mc-list-row";
+    const list = await getSavedWorldsIndex();
+    list.forEach((wn) => {
+      const row = document.createElement("div"); row.className = "mc-list-row";
       row.innerHTML = `<span>${wn}</span><div class="mc-row"><button class="mc-btn tiny green">Играть</button><button class="mc-btn tiny red">✕</button></div>`;
       row.querySelector(".green").onclick = () => startWorld(wn, null, true);
-      row.querySelector(".red").onclick = () => {
-        localStorage.removeItem("vh2_world_" + wn);
-        localStorage.setItem("vh2_worlds_index", JSON.stringify(getSavedWorldsIndex().filter((x) => x !== wn)));
-        renderSavedWorldsList();
+      row.querySelector(".red").onclick = async () => {
+        await VH.DB.del("world_" + wn);
+        const nxt = (await getSavedWorldsIndex()).filter((x) => x !== wn);
+        await VH.DB.set("worlds_index", nxt);
+        renderWorldsModal();
       };
       box.appendChild(row);
     });
@@ -332,11 +372,11 @@
     return Math.abs(h) % 999999;
   }
 
-  function startWorld(name, seedStr, loadExisting = false) {
+  async function startWorld(name, seedStr, loadExisting = false, forcedDim = "overworld") {
     currentWorldKey = (name || "Новый Мир").trim();
     let saved = null;
     if (loadExisting) {
-      try { saved = JSON.parse(localStorage.getItem("vh2_world_" + currentWorldKey) || "null"); } catch {}
+      saved = await VH.DB.get("world_" + currentWorldKey, null);
     }
 
     if (voxelWorld) voxelWorld.disposeAll();
@@ -344,52 +384,53 @@
 
     worldSeed = saved ? saved.seed : (seedStr ? parseInt(seedStr, 10) || hashStr(seedStr) : Math.floor(Math.random() * 999999));
     savedDimMods = saved && saved.dimMods ? saved.dimMods : { overworld: {}, nether: {} };
-    const startDim = saved && saved.dim ? saved.dim : "overworld";
+    savedDimChests = saved && saved.dimChests ? saved.dimChests : { overworld: {}, nether: {} };
+    const startDim = saved && saved.dim ? saved.dim : forcedDim;
 
-    voxelWorld = new VH.VoxelWorld(scene, worldSeed, startDim, savedDimMods[startDim] || {});
+    if (saved && Array.isArray(saved.worldModIds)) {
+      selectedWorldModIds = saved.worldModIds;
+    }
+    VH.modMgr.worldModFilter = selectedWorldModIds;
+    VH.modMgr.reloadAll();
+
+    voxelWorld = new VH.VoxelWorld(scene, worldSeed, startDim, savedDimMods[startDim] || {}, savedDimChests[startDim] || {});
     mobMgr = new VH.MobManager(scene, voxelWorld);
 
     if (saved) {
       player.mode = saved.mode || "survival";
       worldTime = saved.time || 0.28; dayCount = saved.dayCount || 1;
       player.x = saved.player.x; player.y = saved.player.y; player.z = saved.player.z;
+      player.spawnPos = saved.player.spawnPos || null;
       player.hp = saved.player.hp || 20; player.food = saved.player.food || 20;
+      player.armor = saved.player.armor || { head: 0, chest: 0, legs: 0, feet: 0 };
       player.inv = saved.player.inv || {};
-      hotbar = saved.hotbar || [106, 7, 17, 22, 116, 119, 23, 113, 26];
+      hotbar = saved.hotbar || [108, 111, 123, 37, 35, 38, 17, 113, 26];
     } else {
       player.mode = $("mode-creative").classList.contains("active") ? "creative" : "survival";
       worldTime = 0.28; dayCount = 1;
       player.x = 0.5; player.z = 0.5;
       player.y = voxelWorld.getTerrainHeight(0, 0) + 3.2;
+      player.spawnPos = null;
       player.hp = 20; player.food = 20;
-      player.inv = { 108: 1, 111: 1, 7: 16, 17: 1, 22: 14, 116: 1, 119: 1, 113: 6, 26: 4 };
+      player.armor = { head: 125, chest: 0, legs: 0, feet: 0 };
+      player.inv = { 108: 1, 111: 1, 123: 1, 124: 16, 37: 12, 35: 2, 38: 1, 17: 1, 22: 14, 116: 1, 121: 6, 113: 6 };
       hotbar = player.mode === "creative"
-        ? [1, 3, 7, 22, 116, 119, 120, 23, 26]
-        : [108, 111, 7, 22, 116, 119, 17, 113, 26];
+        ? [1, 3, 7, 37, 35, 38, 22, 116, 26]
+        : [108, 111, 123, 37, 35, 38, 116, 113, 26];
     }
 
     for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) voxelWorld.ensureChunk(cx + Math.floor(player.x / 16), cz + Math.floor(player.z / 16));
 
-    // Подключаем рантайм к системе Модов!
-    VH.modMgr.runtime = {
-      toast: showToast,
-      give: addInv,
-      setBlock: (x, y, z, id) => { if (voxelWorld) { voxelWorld.setBlock(x, y, z, id, true); mpMgr.sendBlock(x, y, z, id); } },
-      buildPortal: () => { if (voxelWorld) voxelWorld.buildNetherPortalAt(Math.floor(player.x) + 2, Math.floor(player.y), Math.floor(player.z)); },
-      addRecipe: (out, cnt, req, desc) => CRAFT_RECIPES.push({ out, cnt, req, desc })
-    };
-    VH.modMgr.reloadAll();
-    VH.modMgr.emit("onWorldStart", { name: currentWorldKey, seed: worldSeed, engine: VH.Engine });
-
     player.vx = player.vy = player.vz = 0; player.flying = false;
     running = true; paused = false;
 
-    ["main-menu", "worlds-modal", "pause-modal", "death-modal"].forEach((id) => $(id).classList.add("hidden"));
+    ["main-menu", "worlds-modal", "pause-modal", "death-modal", "mp-modal"].forEach((id) => $(id).classList.add("hidden"));
     $("hud").classList.remove("hidden");
     updateModeUI();
     renderHotbar();
     renderClassicStatusBars();
-    addChatLine("Мир", "Загружен «" + currentWorldKey + "» (Сид: " + worldSeed + "). Для портала используйте Огниво по Обсидиану или /portal!");
+    VH.modMgr.emit("onWorldStart", { name: currentWorldKey, seed: worldSeed, engine: VH.Engine });
+    addChatLine("Мир", `Загружен «${currentWorldKey}» (${VH.WasmCore ? "Rust-WASM Активен!" : "JS Core"})`);
   }
 
   function updateModeUI() {
@@ -398,7 +439,7 @@
     $("btn-fly").classList.toggle("hidden", !isCre);
   }
 
-  // --- RAYCAST, ЛОМАНИЕ, УСТАНОВКА, ВЗРЫВ ---
+  // --- RAYCAST, КОПАНИЕ, ЛУК, КРОВАТЬ, СУНДУКИ ---
   function raycastBlock(maxDist = 5.5) {
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, "YXZ"));
     const ox = player.x, oy = player.y + 1.55, oz = player.z;
@@ -437,17 +478,13 @@
 
     if (isSingleTap && mobMgr) {
       const dmg = (heldInfo && heldInfo.dmg) ? heldInfo.dmg : 3;
-      if (mobMgr.hitMobAtRay({ x: player.x, y: player.y + 1.55, z: player.z }, dir, 4.4, dmg, (dead) => {
-        const drops = { sheep:114, cow:114, pig:114, chicken:114, zombie:101, skeleton:105, creeper:26, spider:105, enderman:104, piglin:103, blaze:23, ghast:104 };
-        addInv(drops[dead.type] || 101, 1);
-        showToast("Побеждён моб: " + dead.type);
-      })) {
+      if (mobMgr.hitMobAtRay({ x: player.x, y: player.y + 1.55, z: player.z }, dir, 4.4, dmg, (dead) => handleMobLoot(dead))) {
         playSfx("hit");
         return;
       }
     }
 
-    const hit = raycastBlock(5.5);
+    const hit = raycastBlock(PHYSICS.reach);
     if (!hit) { miningState.progress = 0; $("mine-bar").classList.add("hidden"); return; }
     const bInfo = VH.ITEMS_DB[hit.id];
     if (!bInfo || bInfo.hard >= 999) return;
@@ -468,7 +505,7 @@
     }
     let speed = 1.0;
     if (heldInfo && heldInfo.toolType === bInfo.tool) speed = heldInfo.power || 2.5;
-    miningState.progress += (dt * speed) / Math.max(0.22, bInfo.hard);
+    miningState.progress += (dt * speed) / Math.max(0.18, bInfo.hard);
 
     $("mine-bar").classList.remove("hidden");
     $("mine-fill").style.width = Math.min(100, miningState.progress * 100) + "%";
@@ -487,6 +524,12 @@
     }
   }
 
+  function handleMobLoot(dead) {
+    const drops = { sheep:114, cow:114, pig:114, chicken:114, zombie:101, skeleton:124, creeper:26, spider:105, enderman:104, piglin:103, blaze:23, ghast:104, inferno_lord:129 };
+    addInv(dead.drop || drops[dead.type] || 101, dead.isBoss ? 1 : 1);
+    showToast(dead.isBoss ? "БОСС ПОВЕРЖЕН! Получена Звезда Преисподней!" : ("Побеждён: " + dead.name));
+  }
+
   function tryPlaceOrUse() {
     player.armSwing = 1.0;
     const heldId = hotbar[player.selectedSlot] || 0;
@@ -498,7 +541,33 @@
       try { if (heldInfo.onUse({ heldId, player, engine: VH.Engine }) !== false) return; } catch {}
     }
 
-    // 1. Съесть еду
+    // 1. Стрельба из Лука (ID 123)
+    if (heldInfo && heldInfo.rangedBow) {
+      if (player.mode === "creative" || takeInv(124, 1)) {
+        const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, "YXZ"));
+        const from = { x: player.x + dir.x * 0.7, y: player.y + 1.5, z: player.z + dir.z * 0.7 };
+        const to   = { x: from.x + dir.x * 15, y: from.y + dir.y * 15 + 1.2, z: from.z + dir.z * 15 };
+        mobMgr.fireProjectile(from, to, heldInfo.dmg || 9, false, true);
+        playSfx("bow");
+      } else {
+        showToast("Нет стрел (ID 124)!");
+      }
+      return;
+    }
+
+    // 2. Надеть броню из руки
+    if (heldInfo && heldInfo.armorSlot) {
+      const prev = player.armor[heldInfo.armorSlot];
+      player.armor[heldInfo.armorSlot] = heldId;
+      takeInv(heldId, 1);
+      if (prev) addInv(prev, 1);
+      renderClassicStatusBars();
+      playSfx("place");
+      showToast("Надето: " + heldInfo.name);
+      return;
+    }
+
+    // 3. Съесть еду
     if (heldInfo && heldInfo.healFood && player.mode === "survival" && (player.food < 20 || player.hp < 20)) {
       if (takeInv(heldId, 1)) {
         player.food = Math.min(20, player.food + heldInfo.healFood);
@@ -509,18 +578,18 @@
       }
     }
 
-    const hit = raycastBlock(5.5);
+    const hit = raycastBlock(PHYSICS.reach);
     if (!hit) return;
 
-    // 2. Огниво по Обсидиану -> строит и зажигает Портал в Ад!
+    // 4. Огниво по Обсидиану -> Портал в Ад
     if (heldInfo && heldInfo.ignitePortal && hit.id === 22) {
       voxelWorld.buildNetherPortalAt(hit.x - 1, hit.y, hit.z);
       playSfx("portal");
-      showToast("Портал в Ад активирован! Войдите внутрь!");
+      showToast("Портал в Ад активирован!");
       return;
     }
 
-    // 3. Ведро воды или лавы -> выливает живую текущую жидкость!
+    // 5. Ведро воды или лавы
     if (heldInfo && heldInfo.placeLiquid) {
       voxelWorld.setBlock(hit.px, hit.py, hit.pz, heldInfo.placeLiquid, true);
       mpMgr.sendBlock(hit.px, hit.py, hit.pz, heldInfo.placeLiquid);
@@ -528,33 +597,99 @@
       return;
     }
 
-    // 4. Интерактивные блоки (Верстак / Печь / Сундук / TNT)
+    // 6. Посадка семян пшеницы на дёрн/землю
+    if (heldInfo && heldInfo.plantCrop && (hit.id === 1 || hit.id === 2)) {
+      if (takeInv(heldId, 1)) {
+        voxelWorld.setBlock(hit.x, hit.y + 1, hit.z, heldInfo.plantCrop, false);
+        playSfx("place");
+      }
+      return;
+    }
+
+    // 7. Интерактивные блоки (Сундук 27 слотов, Кровать, Верстак, Печь, TNT)
     const tInfo = VH.ITEMS_DB[hit.id];
     const intEv = VH.modMgr.emit("onBlockInteract", { x: hit.x, y: hit.y, z: hit.z, id: hit.id, heldId, cancel: false });
     if (intEv.cancel) return;
     if (tInfo && typeof tInfo.onInteract === "function") { try { tInfo.onInteract({ x: hit.x, y: hit.y, z: hit.z, id: hit.id, player, engine: VH.Engine }); } catch {} return; }
+
+    if (tInfo && tInfo.interactive === "chest") { openChestModal(hit.x, hit.y, hit.z); return; }
+    if (tInfo && tInfo.interactive === "bed") {
+      player.spawnPos = { x: hit.x + 0.5, y: hit.y + 1.1, z: hit.z + 0.5, dim: voxelWorld.dimension };
+      worldTime = 0.26;
+      showToast("Точка возрождения установлена! Наступило утро.");
+      return;
+    }
     if (tInfo && tInfo.interactive === "craft") { openInvModal("craft"); return; }
     if (tInfo && tInfo.interactive === "smelt") { openInvModal("smelt"); return; }
-    if (tInfo && tInfo.interactive === "bag")   { openInvModal("bag");   return; }
     if (tInfo && tInfo.interactive === "tnt")   { explodeAt(hit.x, hit.y, hit.z, 2.8); return; }
 
-    // 5. Установка обычного блока
+    // 8. Установка блока
     if (!heldId || !heldInfo || heldInfo.item) return;
     const inPlayer = Math.abs(hit.px + 0.5 - player.x) < 0.7 && Math.abs(hit.pz + 0.5 - player.z) < 0.7 && (hit.py === Math.floor(player.y) || hit.py === Math.floor(player.y + 1));
-    if (inPlayer) return;
+    if (inPlayer && heldInfo.solid) return;
 
     const plEv = VH.modMgr.emit("onBlockPlace", { x: hit.px, y: hit.py, z: hit.pz, id: heldId, cancel: false });
     if (plEv.cancel) return;
     if (takeInv(heldId, 1)) {
       voxelWorld.setBlock(hit.px, hit.py, hit.pz, heldId, true);
-      if (typeof heldInfo.onPlace === "function") { try { heldInfo.onPlace({ x: hit.px, y: hit.py, z: hit.pz, id: heldId, player, engine: VH.Engine }); } catch {} }
       mpMgr.sendBlock(hit.px, hit.py, hit.pz, heldId);
       playSfx("place");
-      VH.modMgr.emit("onBlockPlace", { x: hit.px, y: hit.py, z: hit.pz, id: heldId });
+      if (typeof heldInfo.onPlace === "function") { try { heldInfo.onPlace({ x: hit.px, y: hit.py, z: hit.pz, id: heldId, player, engine: VH.Engine }); } catch {} }
     }
   }
 
-  // --- КЛАССИЧЕСКИЙ ИНВЕНТАРЬ / КРАФТ / ПЕЧЬ ---
+  // --- 27-СЛОТОВЫЙ СУНДУК ---
+  let openChestCoords = null;
+  function openChestModal(x, y, z) {
+    paused = true;
+    openChestCoords = { x, y, z };
+    $("chest-modal").classList.remove("hidden");
+    renderChestModal();
+  }
+
+  function renderChestModal() {
+    if (!openChestCoords || !voxelWorld) return;
+    const items = voxelWorld.getChestItems(openChestCoords.x, openChestCoords.y, openChestCoords.z);
+    const cGrid = $("chest-grid");
+    cGrid.innerHTML = "";
+    items.forEach((slotObj, idx) => {
+      const cell = document.createElement("div"); cell.className = "chest-cell";
+      if (slotObj && slotObj.id && slotObj.cnt > 0) {
+        const cv = document.createElement("canvas"); VH.drawItemIcon(cv, slotObj.id);
+        cell.appendChild(cv);
+        const sp = document.createElement("span"); sp.textContent = slotObj.cnt;
+        cell.appendChild(sp);
+        cell.onclick = () => {
+          addInv(slotObj.id, slotObj.cnt);
+          items[idx] = null;
+          renderChestModal();
+        };
+      }
+      cGrid.appendChild(cell);
+    });
+
+    const pGrid = $("chest-player-grid");
+    pGrid.innerHTML = "";
+    Object.keys(player.inv).map(Number).filter((id) => player.inv[id] > 0).forEach((id) => {
+      const cell = document.createElement("div"); cell.className = "chest-cell";
+      const cv = document.createElement("canvas"); VH.drawItemIcon(cv, id);
+      cell.appendChild(cv);
+      const sp = document.createElement("span"); sp.textContent = player.inv[id];
+      cell.appendChild(sp);
+      cell.onclick = () => {
+        const emptyIdx = items.findIndex((s) => !s);
+        if (emptyIdx === -1) { showToast("Сундук полон!"); return; }
+        const amt = player.inv[id];
+        if (takeInv(id, amt)) {
+          items[emptyIdx] = { id, cnt: amt };
+          renderChestModal();
+        }
+      };
+      pGrid.appendChild(cell);
+    });
+  }
+
+  // --- ИНВЕНТАРЬ, 4 СЛОТА БРОНИ, КРАФТ И ПЕЧЬ ---
   let invTab = "bag";
   function openInvModal(tab = "bag") {
     paused = true; invTab = tab;
@@ -564,6 +699,21 @@
   }
 
   function renderInvModal() {
+    // 4 слота брони сверху
+    const ab = $("armor-slots-bar");
+    ab.innerHTML = "<b style='color:#fff;font-size:11px'>Броня (" + getTotalArmorDef() + "🛡):</b>";
+    const labels = { head: "Шлем", chest: "Грудь", legs: "Ноги", feet: "Ботинки" };
+    for (const sk of ["head", "chest", "legs", "feet"]) {
+      const aid = player.armor[sk];
+      const btn = document.createElement("button");
+      btn.className = "mc-btn tiny " + (aid ? "green" : "");
+      btn.textContent = aid ? `${labels[sk]}: ${VH.ITEMS_DB[aid]?.name}` : `${labels[sk]}: Пусто`;
+      btn.onclick = () => {
+        if (player.armor[sk]) { addInv(player.armor[sk], 1); player.armor[sk] = 0; renderClassicStatusBars(); renderInvModal(); }
+      };
+      ab.appendChild(btn);
+    }
+
     ["bag", "craft", "smelt"].forEach((t) => $("tab-" + t).classList.toggle("active", invTab === t));
     const box = $("inv-content");
     box.innerHTML = "";
@@ -576,10 +726,20 @@
         const card = document.createElement("div"); card.className = "mc-card";
         const cv = document.createElement("canvas"); VH.drawItemIcon(cv, id);
         const cnt = player.mode === "creative" ? "∞" : player.inv[id];
-        card.innerHTML = `<div class="mc-card-head"></div><div class="mc-card-sub">В наличии: ${cnt}</div><button class="mc-btn tiny green">В руку</button>`;
+        card.innerHTML = `<div class="mc-card-head"></div><div class="mc-card-sub">В наличии: ${cnt}</div><button class="mc-btn tiny green">${info.armorSlot ? "Надеть" : "В руку"}</button>`;
         card.querySelector(".mc-card-head").appendChild(cv);
         card.querySelector(".mc-card-head").append(info.name);
-        card.querySelector("button").onclick = () => { hotbar[player.selectedSlot] = id; renderHotbar(); showToast("Выбрано: " + info.name); };
+        card.querySelector("button").onclick = () => {
+          if (info.armorSlot) {
+            const prev = player.armor[info.armorSlot];
+            player.armor[info.armorSlot] = id;
+            takeInv(id, 1);
+            if (prev) addInv(prev, 1);
+            renderClassicStatusBars(); renderInvModal();
+          } else {
+            hotbar[player.selectedSlot] = id; renderHotbar(); showToast("Выбрано: " + info.name);
+          }
+        };
         box.appendChild(card);
       });
       return;
@@ -604,13 +764,12 @@
     });
   }
 
-  // --- КЛАССИЧЕСКОЕ PE УПРАВЛЕНИЕ (КРЕСТОВИНА + ТАП/УДЕРЖАНИЕ ПО ЭКРАНУ + WASD) ---
+  // --- УПРАВЛЕНИЕ (КРЕСТОВИНА + ТАП/УДЕРЖАНИЕ + WASD) ---
   const input = { moveX: 0, moveZ: 0, jump: false, holdingBreak: false };
   const dpad = { up: false, down: false, left: false, right: false };
   const keys = {};
 
   function setupControls() {
-    // 1. Классическая Крестовина (D-Pad)
     const bindDp = (id, k) => {
       const el = $(id);
       const on = (e) => { e.preventDefault(); dpad[k] = true; };
@@ -621,7 +780,6 @@
     };
     bindDp("dp-up", "up"); bindDp("dp-down", "down"); bindDp("dp-left", "left"); bindDp("dp-right", "right");
 
-    // 2. Прыжок / Присед / Полёт справа
     const bJump = $("btn-jump");
     bJump.addEventListener("touchstart", (e) => { e.preventDefault(); input.jump = true; }, { passive: false });
     bJump.addEventListener("touchend", () => { input.jump = false; });
@@ -631,7 +789,6 @@
     $("btn-sneak").onclick = () => { player.sneaking = !player.sneaking; showToast(player.sneaking ? "Присед ВКЛ" : "Присед ВЫКЛ"); };
     $("btn-fly").onclick = () => { if (player.mode === "creative") { player.flying = !player.flying; player.vy = 0; showToast(player.flying ? "Полёт ВКЛ" : "Полёт ВЫКЛ"); } };
 
-    // 3. Альтернативный джойстик
     const jZone = $("joy-zone"), jKnob = $("joy-knob");
     let joyId = null, jCx = 0, jCy = 0;
     jZone.addEventListener("touchstart", (e) => { e.preventDefault(); joyId = e.changedTouches[0].identifier; const r = $("joy-base").getBoundingClientRect(); jCx = r.left + r.width/2; jCy = r.top + r.height/2; }, { passive: false });
@@ -649,10 +806,6 @@
     const endJoy = (e) => { for (const t of e.changedTouches) if (t.identifier === joyId) { joyId = null; input.moveX = 0; input.moveZ = 0; jKnob.style.left = "36px"; jKnob.style.top = "36px"; } };
     jZone.addEventListener("touchend", endJoy); jZone.addEventListener("touchcancel", endJoy);
 
-    // 4. КЛАССИЧЕСКИЙ PE СЕНСОР ПО ЭКРАНУ:
-    //    - Свайп = поворот камеры
-    //    - Короткий тап = поставить блок / ударить моба / открыть верстак
-    //    - Долгое удержание (>220мс без сдвига) = ломать блок!
     const canvas = $("game-canvas");
     let touchId = null, startX = 0, startY = 0, lastX = 0, lastY = 0, startTime = 0, moved = false, holdTimer = null;
 
@@ -664,10 +817,7 @@
       startTime = performance.now(); moved = false;
       clearTimeout(holdTimer);
       holdTimer = setTimeout(() => {
-        if (!moved && touchId !== null) {
-          input.holdingBreak = true;
-          tryAttackOrMine(0.05, true);
-        }
+        if (!moved && touchId !== null) { input.holdingBreak = true; tryAttackOrMine(0.05, true); }
       }, 220);
     });
 
@@ -678,9 +828,7 @@
         const dx = t.clientX - lastX, dy = t.clientY - lastY;
         lastX = t.clientX; lastY = t.clientY;
         if (Math.hypot(t.clientX - startX, t.clientY - startY) > 12) {
-          moved = true;
-          clearTimeout(holdTimer);
-          input.holdingBreak = false;
+          moved = true; clearTimeout(holdTimer); input.holdingBreak = false;
           miningState.progress = 0; $("mine-bar").classList.add("hidden");
         }
         player.yaw -= dx * 0.0055 * SETTINGS.sens;
@@ -694,24 +842,17 @@
         clearTimeout(holdTimer);
         const dur = performance.now() - startTime;
         if (!moved && !input.holdingBreak && dur < 220) {
-          // Короткий тап: если в прицеле моб — бьём, иначе ставим/используем!
           const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, "YXZ"));
           const heldInfo = VH.ITEMS_DB[hotbar[player.selectedSlot] || 0];
-          const hitMob = mobMgr && mobMgr.hitMobAtRay({ x: player.x, y: player.y + 1.55, z: player.z }, dir, 4.4, heldInfo?.dmg || 3, (d) => {
-            addInv(114, 1); showToast("Побеждён моб: " + d.type);
-          });
+          const hitMob = mobMgr && mobMgr.hitMobAtRay({ x: player.x, y: player.y + 1.55, z: player.z }, dir, 4.4, heldInfo?.dmg || 3, (d) => handleMobLoot(d));
           if (hitMob) { player.armSwing = 1.0; playSfx("hit"); }
           else tryPlaceOrUse();
         }
-        touchId = null;
-        input.holdingBreak = false;
-        miningState.progress = 0; $("mine-bar").classList.add("hidden");
+        touchId = null; input.holdingBreak = false; miningState.progress = 0; $("mine-bar").classList.add("hidden");
       }
     };
-    canvas.addEventListener("touchend", endTouch);
-    canvas.addEventListener("touchcancel", endTouch);
+    canvas.addEventListener("touchend", endTouch); canvas.addEventListener("touchcancel", endTouch);
 
-    // 5. ПК-управление (WASD + Мышь)
     window.addEventListener("keydown", (e) => {
       keys[e.code] = true;
       if (e.code >= "Digit1" && e.code <= "Digit9") { player.selectedSlot = +e.code[5] - 1; renderHotbar(); }
@@ -744,8 +885,11 @@
     return false;
   }
 
-  function damagePlayer(amt) {
-    if (player.mode === "creative" || amt <= 0) return;
+  function damagePlayer(rawAmt) {
+    if (player.mode === "creative" || rawAmt <= 0) return;
+    const armorDef = getTotalArmorDef();
+    const amt = Math.max(1, Math.round(rawAmt * (1 - armorDef * 0.06)));
+    VH.modMgr.emit("onPlayerHurt", { amount: amt, rawAmt, player });
     player.hp = Math.max(0, player.hp - amt);
     playSfx("hit");
     renderClassicStatusBars();
@@ -772,20 +916,11 @@
     $("underwater-tint").classList.toggle("hidden", headBlk !== 9);
     $("portal-tint").classList.toggle("hidden", !inPortal);
 
-    if (inLava) {
-      player.lavaTimer += dt;
-      if (player.lavaTimer > 0.6) { player.lavaTimer = 0; damagePlayer(3); }
-    }
+    if (inLava) { player.lavaTimer += dt; if (player.lavaTimer > 0.6) { player.lavaTimer = 0; damagePlayer(3); } }
     if (inPortal) {
       player.portalTimer += dt;
-      if (player.portalTimer > 1.8) {
-        player.portalTimer = 0;
-        switchDimension(voxelWorld.dimension === "overworld" ? "nether" : "overworld");
-        return;
-      }
-    } else {
-      player.portalTimer = 0;
-    }
+      if (player.portalTimer > 1.8) { player.portalTimer = 0; switchDimension(voxelWorld.dimension === "overworld" ? "nether" : "overworld"); return; }
+    } else player.portalTimer = 0;
 
     const jumping = input.jump || keys["Space"];
     if (player.flying) {
@@ -816,7 +951,6 @@
       player.vy = 0;
     }
 
-    // Анимация покачивания при ходьбе и взмаха руки
     const moveMag = Math.hypot(player.vx, player.vz);
     if (moveMag > 0.3 && player.onGround) player.walkBob += dt * moveMag * 2.4;
     if (player.armSwing > 0) player.armSwing = Math.max(0, player.armSwing - dt * 5.0);
@@ -831,10 +965,8 @@
     lastTs = ts;
     if (!running || paused) return;
 
-    // 1. Анимация Воды, Лавы и Портала
     atlasObj.updateAnimatedTextures(ts / 1000);
 
-    // 2. Освещение и небо (Обычный мир vs Ад!)
     const isNether = voxelWorld.dimension === "nether";
     const cDim = VH.CUSTOM_DIMENSIONS[voxelWorld.dimension];
     let isNight = false;
@@ -843,8 +975,7 @@
       scene.fog.color.setHex(cDim.fogColor ?? cDim.skyColor ?? 0x101830);
       ambLight.intensity = cDim.ambient ?? 0.65; sunLight.intensity = cDim.sun ?? 0.7;
     } else if (isNether) {
-      scene.background.setHex(0x3a0c0c);
-      scene.fog.color.setHex(0x3a0c0c);
+      scene.background.setHex(0x3a0c0c); scene.fog.color.setHex(0x3a0c0c);
       ambLight.intensity = 0.58; sunLight.intensity = 0.45;
     } else {
       worldTime += (dt * PHYSICS.timeScale) / 360;
@@ -859,14 +990,23 @@
       sunLight.position.set(Math.cos(ang) * 50, Math.sin(ang) * 50, 20);
     }
 
-    // 3. Физика, Чанки, Течение воды/лавы, Мобы, Частицы, Моды
     updatePhysics(dt);
     voxelWorld.updateAround(player.x, player.z, SETTINGS.renderDist);
     fluidTimer += dt;
     if (fluidTimer > 0.22) { fluidTimer = 0; voxelWorld.tickFluids(); }
 
-    mobMgr.update(dt, player, isNight, (d) => damagePlayer(d), (ex, ey, ez, r) => explodeAt(ex, ey, ez, r));
+    mobMgr.update(dt, player, isNight, (d) => damagePlayer(d), (ex, ey, ez, r) => explodeAt(ex, ey, ez, r), (dead) => handleMobLoot(dead));
     if (input.holdingBreak) tryAttackOrMine(dt, false);
+
+    // Полоса здоровья Босса (если рядом есть Босс)
+    const boss = mobMgr.getActiveBoss();
+    if (boss) {
+      $("boss-bar").classList.remove("hidden");
+      $("boss-name").textContent = `${boss.name} (${Math.max(0, Math.ceil(boss.hp))}/${boss.maxHp})`;
+      $("boss-fill").style.width = Math.max(0, (boss.hp / boss.maxHp) * 100) + "%";
+    } else {
+      $("boss-bar").classList.add("hidden");
+    }
 
     for (let i = particles.length - 1; i >= 0; i--) {
       const pt = particles[i];
@@ -875,9 +1015,8 @@
       if (pt.life <= 0) { scene.remove(pt.mesh); particles.splice(i, 1); }
     }
 
-    VH.modMgr.emit("onTick", { dt, player });
+    VH.modMgr.emit("onTick", { dt, player, engine: VH.Engine });
 
-    // 4. Голод и регенерация
     if (player.mode === "survival") {
       player.hungerTimer += dt;
       if (player.hungerTimer > 22) {
@@ -888,7 +1027,6 @@
       }
     }
 
-    // 5. Камера (1-е лицо с анимированной рукой ИЛИ 3-е лицо со скином!)
     const bobY = Math.sin(player.walkBob) * 0.05;
     camera.rotation.order = "YXZ";
     camera.rotation.y = player.yaw;
@@ -898,8 +1036,7 @@
       const dist = 3.6;
       const sinY = Math.sin(player.yaw), cosY = Math.cos(player.yaw);
       camera.position.set(player.x + sinY * dist, player.y + 2.2 - Math.sin(player.pitch) * 1.5, player.z + cosY * dist);
-      fpArmGroup.visible = false;
-      playerAvatar.visible = true;
+      fpArmGroup.visible = false; playerAvatar.visible = true;
       playerAvatar.position.set(player.x, player.y, player.z);
       playerAvatar.rotation.y = player.yaw + Math.PI;
       const sw = Math.sin(player.walkBob) * 0.65;
@@ -907,17 +1044,15 @@
       playerAvatar.userData.armL.rotation.x = -sw; playerAvatar.userData.armR.rotation.x = sw - player.armSwing * 1.3;
     } else {
       camera.position.set(player.x, player.y + 1.55 + bobY, player.z);
-      fpArmGroup.visible = true;
-      playerAvatar.visible = false;
+      fpArmGroup.visible = true; playerAvatar.visible = false;
       fpArmGroup.position.set(Math.cos(player.walkBob * 0.5) * 0.03, bobY * 0.5, -Math.sin(player.armSwing * Math.PI) * 0.25);
       fpArmGroup.rotation.x = -Math.sin(player.armSwing * Math.PI) * 0.75;
     }
 
-    const hit = raycastBlock(5.5);
+    const hit = raycastBlock(PHYSICS.reach);
     highlightBox.visible = Boolean(hit);
     if (hit) highlightBox.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
 
-    // 6. Сетевая синхронизация и координаты
     mpTimer += dt;
     if (mpTimer > 0.1) { mpTimer = 0; mpMgr.sendPos(player.x, player.y, player.z, player.yaw); }
 
@@ -931,7 +1066,6 @@
     renderer.render(scene, camera);
   }
 
-  // --- ПРИВЯЗКА ВСЕХ МЕНЮ (СКИНЫ, МОДЫ, МУЛЬТИПЛЕЕР, ЧАТ, НАСТРОЙКИ) ---
   function renderSkinsMenu() {
     const grid = $("skins-grid");
     grid.innerHTML = "";
@@ -955,23 +1089,6 @@
     });
   }
 
-  let editingModId = null;
-  function renderModsMenu() {
-    const box = $("mods-list");
-    box.innerHTML = "";
-    VH.modMgr.mods.forEach((m) => {
-      const row = document.createElement("div");
-      row.className = "mc-list-row";
-      row.innerHTML = `<span>${m.name}</span><div class="mc-row"><button class="mc-btn tiny ${m.enabled ? "green" : ""}">${m.enabled ? "ВКЛ" : "ВЫКЛ"}</button><button class="mc-btn tiny edit-m">✎</button><button class="mc-btn tiny red">✕</button></div>`;
-      row.querySelector("button:first-child").onclick = () => { VH.modMgr.toggleMod(m.id); renderModsMenu(); };
-      row.querySelector(".edit-m").onclick = () => { editingModId = m.id; $("mod-name-inp").value = m.name; $("mod-code-inp").value = m.code; };
-      row.querySelector(".red").onclick = () => { VH.modMgr.removeMod(m.id); renderModsMenu(); };
-      box.appendChild(row);
-    });
-    const con = $("mod-console-log");
-    if (con) con.textContent = VH.modMgr.logs.join("\n") || "Консоль чиста. Включите любой мод или напишите свой!";
-  }
-
   function handleChatCommand(raw) {
     const text = raw.trim();
     if (!text) return;
@@ -979,6 +1096,7 @@
     mpMgr.sendChat(text);
     const chatEv = VH.modMgr.emit("onChat", { text, cancel: false });
     if (chatEv.cancel) return;
+
     if (text.startsWith("/")) {
       const parts = text.slice(1).split(/\s+/);
       const cmdFn = VH.CUSTOM_COMMANDS[parts[0].toLowerCase()];
@@ -987,6 +1105,7 @@
 
     if (text === "/nether") switchDimension("nether");
     else if (text === "/overworld") switchDimension("overworld");
+    else if (text === "/boss") { mobMgr.spawnMob("inferno_lord", player.x + 5, player.y + 1, player.z + 5); showToast("Призван Повелитель Преисподней!"); }
     else if (text === "/time day") { worldTime = 0.28; showToast("Установлен день!"); }
     else if (text === "/time night") { worldTime = 0.85; showToast("Установлена ночь!"); }
     else if (text.startsWith("/give ")) {
@@ -996,31 +1115,44 @@
   }
 
   function bindUI() {
-    $("btn-open-worlds").onclick = () => { renderSavedWorldsList(); $("worlds-modal").classList.remove("hidden"); };
+    $("btn-open-worlds").onclick = () => { renderWorldsModal(); $("worlds-modal").classList.remove("hidden"); };
     $("btn-close-worlds").onclick = () => $("worlds-modal").classList.add("hidden");
     $("mode-survival").onclick = () => { $("mode-survival").classList.add("active"); $("mode-creative").classList.remove("active"); };
     $("mode-creative").onclick = () => { $("mode-creative").classList.add("active"); $("mode-survival").classList.remove("active"); };
     $("btn-play").onclick = () => startWorld($("world-name-input").value, $("world-seed-input").value, false);
 
-    // Скины
+    $("inp-world-file").onchange = (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = async () => {
+        try {
+          const data = JSON.parse(String(r.result || "{}"));
+          if (data && data.name) {
+            await VH.DB.set("world_" + data.name, data);
+            const idx = await getSavedWorldsIndex();
+            if (!idx.includes(data.name)) { idx.unshift(data.name); await VH.DB.set("worlds_index", idx); }
+            renderWorldsModal(); showToast("Импортирован мир: " + data.name);
+          }
+        } catch { showToast("Ошибка чтения файла мира"); }
+      };
+      r.readAsText(f);
+    };
+
     $("btn-open-skins").onclick = () => { renderSkinsMenu(); $("skins-modal").classList.remove("hidden"); };
     $("btn-close-skins").onclick = () => $("skins-modal").classList.add("hidden");
     $("inp-custom-skin").onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const file = e.target.files[0]; if (!file) return;
       const img = new Image();
       img.onload = () => {
         const custom = { id: "custom", name: "Свой скин", skin: "#e2b28b", hair: "#333", shirt: "#2ed573", pants: "#334", eye: "#fff", customImg: img };
         const ex = VH.SKINS_DB.findIndex((s) => s.id === "custom");
         if (ex >= 0) VH.SKINS_DB[ex] = custom; else VH.SKINS_DB.push(custom);
         player.skinId = "custom"; VH.drawSkinPreview($("menu-skin-canvas"), custom);
-        $("menu-skin-name").textContent = "Скин: Свой PNG";
-        renderSkinsMenu();
+        $("menu-skin-name").textContent = "Скин: Свой PNG"; renderSkinsMenu();
       };
       img.src = URL.createObjectURL(file);
     };
 
-    // Мультиплеер
     const openMp = () => { paused = running; $("mp-modal").classList.remove("hidden"); };
     $("btn-open-mp").onclick = openMp;
     $("btn-mp-ingame").onclick = openMp;
@@ -1031,32 +1163,23 @@
       if (!running) startWorld("Сетевой мир", "100100", false);
     };
 
-    // Моды
-    const openMods = () => { renderModsMenu(); $("mods-modal").classList.remove("hidden"); };
-    $("btn-open-mods").onclick = openMods;
-    $("btn-pause-mods").onclick = openMods;
-    $("btn-close-mods").onclick = () => $("mods-modal").classList.add("hidden");
-    $("btn-mod-add").onclick = () => {
-      const code = $("mod-code-inp").value.trim();
-      if (!code) return;
-      if (editingModId) {
-        VH.modMgr.updateMod(editingModId, $("mod-name-inp").value.trim(), code);
-        editingModId = null;
-      } else {
-        VH.modMgr.addMod($("mod-name-inp").value.trim(), code);
+    $("btn-mp-accept-mods").onclick = () => {
+      if (!pendingHostSync) return;
+      VH.modMgr.sessionMods = pendingHostSync.projects || [];
+      VH.modMgr.reloadAll();
+      if (pendingHostSync.seed && voxelWorld) {
+        worldSeed = pendingHostSync.seed;
+        voxelWorld.disposeAll();
+        voxelWorld = new VH.VoxelWorld(scene, worldSeed, pendingHostSync.dim || "overworld", {}, {});
+        mobMgr.setWorld(voxelWorld);
       }
-      $("mod-name-inp").value = ""; $("mod-code-inp").value = "";
-      renderModsMenu(); showToast("Мод сохранён и запущен!");
+      $("mp-mods-prompt").classList.add("hidden");
+      showToast("Моды и мир сервера подкачаны на сессию!");
     };
-    $("inp-mod-file").onchange = (e) => {
-      const f = e.target.files[0]; if (!f) return;
-      const r = new FileReader();
-      r.onload = () => { VH.modMgr.addMod(f.name.replace(/\.js$/i, ""), String(r.result || "")); renderModsMenu(); showToast("Импортирован мод: " + f.name); };
-      r.readAsText(f);
-    };
+    $("btn-mp-decline-mods").onclick = () => { $("mp-mods-prompt").classList.add("hidden"); };
+
     $("btn-close-mod-custom").onclick = () => VH.Mods.ui.closeModal();
 
-    // Настройки
     const openSet = () => $("settings-modal").classList.remove("hidden");
     $("btn-open-settings").onclick = openSet;
     $("btn-pause-settings").onclick = openSet;
@@ -1077,94 +1200,82 @@
       $("joy-zone").classList.toggle("hidden", SETTINGS.ctrlMode === "dpad");
     };
 
-    // Инвентарь, Камера, Чат, Пауза
     $("btn-inv-dots").onclick = () => openInvModal("bag");
     $("btn-close-inv").onclick = () => { $("inv-modal").classList.add("hidden"); paused = false; };
     $("tab-bag").onclick   = () => { invTab = "bag"; renderInvModal(); };
     $("tab-craft").onclick = () => { invTab = "craft"; renderInvModal(); };
     $("tab-smelt").onclick = () => { invTab = "smelt"; renderInvModal(); };
 
+    $("btn-close-chest").onclick = () => { $("chest-modal").classList.add("hidden"); paused = false; saveCurrentWorld(true); };
+
     $("btn-cam-view").onclick = () => { player.camThirdPerson = !player.camThirdPerson; showToast(player.camThirdPerson ? "Камера: 3-е лицо" : "Камера: 1-е лицо"); };
 
     $("btn-chat-open").onclick = () => { paused = true; $("chat-modal").classList.remove("hidden"); $("chat-input").focus(); };
     $("btn-chat-close").onclick = () => { $("chat-modal").classList.add("hidden"); paused = false; };
-    $("btn-chat-send").onclick = () => {
-      handleChatCommand($("chat-input").value);
-      $("chat-input").value = "";
-      $("chat-modal").classList.add("hidden");
-      paused = false;
-    };
+    $("btn-chat-send").onclick = () => { handleChatCommand($("chat-input").value); $("chat-input").value = ""; $("chat-modal").classList.add("hidden"); paused = false; };
 
     $("btn-pause").onclick = () => { paused = true; $("pause-modal").classList.remove("hidden"); };
     $("btn-resume").onclick = () => { $("pause-modal").classList.add("hidden"); paused = false; };
-    $("btn-save-now").onclick = () => saveCurrentWorld();
-    $("btn-toggle-dim").onclick = () => {
-      $("pause-modal").classList.add("hidden"); paused = false;
-      switchDimension(voxelWorld.dimension === "overworld" ? "nether" : "overworld");
+    $("btn-save-now").onclick = () => saveCurrentWorld(false);
+    $("btn-export-world").onclick = async () => {
+      await saveCurrentWorld(true);
+      const data = await VH.DB.get("world_" + currentWorldKey, null);
+      if (data) { const msg = await VH.exportJsonFile(currentWorldKey.replace(/[^a-zA-Zа-яА-Я0-9_-]/g, "_") + ".vhworld", data); showToast(msg); }
     };
+    $("btn-toggle-dim").onclick = () => { $("pause-modal").classList.add("hidden"); paused = false; switchDimension(voxelWorld.dimension === "overworld" ? "nether" : "overworld"); };
     $("btn-toggle-mode").onclick = () => {
       player.mode = player.mode === "survival" ? "creative" : "survival";
       player.flying = false; updateModeUI(); renderHotbar();
       showToast("Режим: " + (player.mode === "creative" ? "Творчество" : "Выживание"));
     };
-    $("btn-exit-menu").onclick = () => {
-      saveCurrentWorld(); running = false; paused = false;
+    $("btn-exit-menu").onclick = async () => {
+      await saveCurrentWorld(true);
+      running = false; paused = false;
       $("pause-modal").classList.add("hidden"); $("hud").classList.add("hidden");
       $("main-menu").classList.remove("hidden");
     };
     $("btn-respawn").onclick = () => {
       player.hp = 20; player.food = 20;
-      player.x = 0.5; player.z = 0.5;
-      player.y = voxelWorld.dimension === "nether" ? 26.2 : voxelWorld.getTerrainHeight(0, 0) + 3.5;
+      if (player.spawnPos) {
+        if (voxelWorld.dimension !== player.spawnPos.dim) switchDimension(player.spawnPos.dim);
+        player.x = player.spawnPos.x; player.y = player.spawnPos.y; player.z = player.spawnPos.z;
+      } else {
+        player.x = 0.5; player.z = 0.5;
+        player.y = voxelWorld.dimension === "nether" ? 26.2 : voxelWorld.getTerrainHeight(0, 0) + 3.5;
+      }
       player.vy = 0; $("death-modal").classList.add("hidden"); paused = false;
       renderClassicStatusBars();
     };
+
+    // Нативная кнопка «Назад» Android и автосохранение при сворачивании приложения
+    document.addEventListener("visibilitychange", () => { if (document.hidden && running) saveCurrentWorld(true); });
+    try {
+      const capApp = window.Capacitor?.Plugins?.App;
+      if (capApp) {
+        capApp.addListener("backButton", () => {
+          if (running && !paused) { paused = true; $("pause-modal").classList.remove("hidden"); }
+        });
+        capApp.addListener("appStateChange", ({ isActive }) => { if (!isActive && running) saveCurrentWorld(true); });
+      }
+    } catch {}
   }
 
-
-  // ПОЛНЫЙ ДОСТУП МОДОВ К ЯДРУ ДВИЖКА (VH.Engine)
   VH.Engine = {
     get THREE() { return window.THREE; },
     get scene() { return scene; },
     get camera() { return camera; },
     get renderer() { return renderer; },
-    get sunLight() { return sunLight; },
-    get ambLight() { return ambLight; },
-    get fpArmGroup() { return fpArmGroup; },
-    get playerAvatar() { return playerAvatar; },
     get world() { return voxelWorld; },
     get mobMgr() { return mobMgr; },
     get mpMgr() { return mpMgr; },
-    get particles() { return particles; },
     get worldTime() { return worldTime; },
     set worldTime(v) { worldTime = v; },
-    player,
-    hotbar,
-    SETTINGS,
-    physics: PHYSICS,
-    input,
-    keys,
-    dpad,
-    ITEMS_DB: VH.ITEMS_DB,
-    SKINS_DB: VH.SKINS_DB,
-    CRAFT_RECIPES,
-    SMELT_RECIPES,
+    player, hotbar, SETTINGS, physics: PHYSICS, input, keys, dpad,
+    ITEMS_DB: VH.ITEMS_DB, SKINS_DB: VH.SKINS_DB, CRAFT_RECIPES, SMELT_RECIPES,
     getBlock: (x, y, z) => voxelWorld ? voxelWorld.getBlock(x, y, z) : 0,
     setBlock: (x, y, z, id) => { if (voxelWorld) { voxelWorld.setBlock(x, y, z, id, true); mpMgr.sendBlock(x, y, z, id); } },
-    raycastBlock,
-    explodeAt,
-    switchDimension,
-    spawnBreakParticles,
-    playSfx,
-    damagePlayer,
-    addInv,
-    takeInv,
-    renderHotbar,
-    renderClassicStatusBars,
-    saveCurrentWorld,
-    addChatLine,
-    showToast,
-    openInvModal,
+    raycastBlock, explodeAt, switchDimension, spawnBreakParticles, playSfx, damagePlayer,
+    addInv, takeInv, renderHotbar, renderClassicStatusBars, saveCurrentWorld, addChatLine, showToast, openInvModal,
     setPaused: (v) => { paused = Boolean(v); },
     buildPortalFront: () => { if (voxelWorld) voxelWorld.buildNetherPortalAt(Math.floor(player.x) + 2, Math.floor(player.y), Math.floor(player.z)); }
   };
@@ -1172,7 +1283,8 @@
   initThree();
   setupControls();
   bindUI();
-  VH.modMgr.reloadAll();
+  if (VH.bindStudioEvents) VH.bindStudioEvents();
+  VH.modMgr.initFromDB();
   VH.drawSkinPreview($("menu-skin-canvas"), getActiveSkinObj());
   $("menu-skin-name").textContent = "Скин: " + getActiveSkinObj().name;
   requestAnimationFrame(loop);

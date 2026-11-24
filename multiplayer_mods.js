@@ -1,5 +1,5 @@
 // ============================================================================
-// VOXELHORIZON v2.1 — P2P МУЛЬТИПЛЕЕР + ПОЛНЫЙ БЕЗГРАНИЧНЫЙ MODDING API (VH.Mods / VH.Engine)
+// VOXELHORIZON v3.0 — INDEXEDDB, ЭКСПОРТ ФАЙЛОВ, АВТОПОДКАЧКА МОДОВ В СЕТИ, .VHMOD ПРОЕКТЫ
 // ============================================================================
 window.VH = window.VH || {};
 VH.CUSTOM_MOBS = {};
@@ -7,7 +7,101 @@ VH.CUSTOM_DIMENSIONS = {};
 VH.CUSTOM_COMMANDS = {};
 
 // ============================================================================
-// 1. P2P МУЛЬТИПЛЕЕР (PEERJS)
+// 1. НАДЁЖНОЕ ХРАНИЛИЩЕ INDEXEDDB (БЕЗ ЛИМИТА 5 МБ!)
+// ============================================================================
+const VH_DB = {
+  _db: null,
+  async open() {
+    if (this._db) return this._db;
+    return new Promise((resolve) => {
+      try {
+        const req = indexedDB.open("VoxelHorizonDB_v3", 1);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
+        };
+        req.onsuccess = (e) => { this._db = e.target.result; resolve(this._db); };
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+  },
+  async get(key, fallback = null) {
+    const db = await this.open();
+    if (!db) {
+      try { const v = localStorage.getItem("vh3_" + key); return v !== null ? JSON.parse(v) : fallback; } catch { return fallback; }
+    }
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("kv", "readonly");
+        const r = tx.objectStore("kv").get(key);
+        r.onsuccess = () => resolve(r.result !== undefined ? r.result : fallback);
+        r.onerror = () => resolve(fallback);
+      } catch { resolve(fallback); }
+    });
+  },
+  async set(key, val) {
+    const db = await this.open();
+    if (!db) {
+      try { localStorage.setItem("vh3_" + key, JSON.stringify(val)); } catch {}
+      return;
+    }
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("kv", "readwrite");
+        tx.objectStore("kv").put(val, key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch { resolve(false); }
+    });
+  },
+  async del(key) {
+    const db = await this.open();
+    if (!db) { try { localStorage.removeItem("vh3_" + key); } catch {} return; }
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("kv", "readwrite");
+        tx.objectStore("kv").delete(key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch { resolve(false); }
+    });
+  }
+};
+VH.DB = VH_DB;
+
+// Экспорт / Сохранение файлов (.vhworld / .vhmod) на устройство Android (Capacitor Filesystem + Share) или в браузер
+VH.exportJsonFile = async function (filename, objData) {
+  const jsonStr = JSON.stringify(objData, null, 2);
+  try {
+    const cap = window.Capacitor;
+    if (cap && cap.Plugins && cap.Plugins.Filesystem) {
+      const { Filesystem, Share } = cap.Plugins;
+      await Filesystem.requestPermissions?.();
+      const res = await Filesystem.writeFile({
+        path: "VoxelHorizon/" + filename,
+        data: jsonStr,
+        directory: "DOCUMENTS",
+        encoding: "utf8",
+        recursive: true
+      });
+      if (Share) {
+        await Share.share({ title: filename, url: res.uri });
+      }
+      return "Сохранено в Documents/VoxelHorizon/" + filename;
+    }
+  } catch (e) { console.warn("Capacitor Filesystem fallback:", e); }
+
+  const blob = new Blob([jsonStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return "Файл " + filename + " загружен!";
+};
+
+// ============================================================================
+// 2. P2P МУЛЬТИПЛЕЕР С АВТОПОДКАЧКОЙ МОДОВ ХОСТА И СИДА МИРА
 // ============================================================================
 class MultiplayerManager {
   constructor(scene) {
@@ -20,7 +114,7 @@ class MultiplayerManager {
     this.nick = "Игрок";
     this.onBlockRemote = null;
     this.onChatRemote = null;
-    this.onCustomPacket = null; // Моды могут слать свои сетевые пакеты!
+    this.onHostModsOffered = null; // Callback при получении модов от хоста
   }
   _genCode() { return "VH-" + Math.floor(1000 + Math.random() * 8999); }
 
@@ -63,7 +157,19 @@ class MultiplayerManager {
       if (onStatus) onStatus("Подключено к комнате " + this.roomCode + "!");
       if (this.onChatRemote) this.onChatRemote("Сеть", "Подключён игрок: " + conn.peer);
       conn.send({ t: "hello", nick: this.nick, skinId: VH.activeSkinId || "explorer" });
+
+      // Если мы ХОСТ — сразу отправляем новому игроку пакет автоподкачки модов и сида мира!
+      if (this.isHost) {
+        const activeProjects = VH.modMgr.getActiveProjects();
+        conn.send({
+          t: "mods_sync",
+          seed: VH.Engine?.world?.seed || 100100,
+          dim: VH.Engine?.world?.dimension || "overworld",
+          projects: activeProjects
+        });
+      }
     });
+
     conn.on("data", (msg) => {
       if (!msg || !msg.t) return;
       if (msg.t === "hello" || msg.t === "pos") {
@@ -78,8 +184,11 @@ class MultiplayerManager {
       } else if (msg.t === "mod_pkt") {
         VH.modMgr.emit("onNetPacket", { peer: conn.peer, channel: msg.ch, data: msg.data });
         if (this.isHost) this.broadcast(msg, conn.peer);
+      } else if (msg.t === "mods_sync" && !this.isHost) {
+        if (this.onHostModsOffered) this.onHostModsOffered(msg);
       }
     });
+
     conn.on("close", () => {
       this.conns.delete(conn.peer);
       const rp = this.remotePlayers.get(conn.peer);
@@ -111,73 +220,73 @@ class MultiplayerManager {
   sendBlock(x, y, z, id) { if (this.conns.size) this.broadcast({ t: "blk", x, y, z, id }); }
   sendChat(text) { if (this.conns.size) this.broadcast({ t: "chat", nick: this.nick, text }); }
   sendModPacket(ch, data) { if (this.conns.size) this.broadcast({ t: "mod_pkt", ch, data }); }
+
   disconnect() {
-    for (const c of this.conns.values()) { try { c.close(); } catch {} }
+    for (const conn of this.conns.values()) { try { conn.close(); } catch {} }
     this.conns.clear();
     for (const rp of this.remotePlayers.values()) this.scene.remove(rp.mesh);
     this.remotePlayers.clear();
     if (this.peer) { try { this.peer.destroy(); } catch {} this.peer = null; }
+    // Выгружаем временные моды хоста при выходе из комнаты!
+    if (VH.modMgr.sessionMods) {
+      VH.modMgr.sessionMods = null;
+      VH.modMgr.reloadAll();
+    }
   }
 }
 
 // ============================================================================
-// 2. ВСТРОЕННЫЕ ПРИМЕРЫ МОДОВ (ПОКАЗЫВАЮТ ПОЛНЫЙ ДОСТУП КО ВСЕМУ ДВИЖКУ!)
+// 3. МНОГОФАЙЛОВЫЕ ПРОЕКТЫ МОДОВ (.VHMOD) + ПОЛНЫЙ MODDING ENGINE
 // ============================================================================
-const DEFAULT_MODS = [
-  {
-    id: "mod_fast_portal",
-    name: "Быстрый Портал (/portal)",
-    enabled: true,
-    code:
-`VH.Mods.registerCommand("portal", () => {
-  VH.Mods.buildPortal();
-  VH.Mods.toast("Портал в Ад построен перед вами!");
-});`
-  },
-  {
-    id: "mod_gadgets_pack",
-    name: "Мод: Батут-Блок + Посох Молнии + HUD Кнопка",
-    enabled: false,
-    code:
-`// 1. Новый блок: Батут (ID 50) с собственной текстурой и физикой прыжка!
-VH.Mods.registerBlock(50, {
+function createDefaultModProjects() {
+  return [
+    {
+      id: "proj_portal",
+      name: "Быстрый Портал (/portal)",
+      enabled: true,
+      files: {
+        "manifest.json": JSON.stringify({ id: "proj_portal", name: "Быстрый Портал", version: "1.0", entry: "scripts/main.js" }, null, 2),
+        "scripts/main.js": `VH.Mods.registerCommand("portal", () => {\n  VH.Mods.buildPortal();\n  VH.Mods.toast("Портал в Ад построен перед вами!");\n});`,
+        "textures/icon.json": JSON.stringify({ size: 16, pixels: [] }),
+        "models/entity.vhmodel.json": JSON.stringify({ name: "custom_entity", bones: [{ name: "root", pivot: [0,0,0], cubes: [{ origin: [-4,0,-4], size: [8,8,8], color: "#2ed573" }] }] }, null, 2),
+        "animations/entity.vhanim.json": JSON.stringify({ duration: 1.0, loop: true, tracks: { root: [{ time: 0, rot: [0,0,0] }, { time: 0.5, rot: [0,180,0] }, { time: 1.0, rot: [0,360,0] }] } }, null, 2)
+      }
+    },
+    {
+      id: "proj_gadgets",
+      name: "Батут + Посох Молнии + HUD Кнопка (/gadgets)",
+      enabled: false,
+      files: {
+        "manifest.json": JSON.stringify({ id: "proj_gadgets", name: "Гаджеты и Батут", version: "1.0", entry: "scripts/main.js" }, null, 2),
+        "scripts/main.js":
+`VH.Mods.registerBlock(50, {
   name: "Батут-Блок",
   color: "#2ed573",
   hard: 0.6,
-  onStep: ({ player }) => {
-    player.vy = 14.5;
-    VH.Engine.playSfx("craft");
-    VH.Mods.toast("Прыжок на Батуте!");
-  }
+  onStep: ({ player }) => { player.vy = 14.5; VH.Engine.playSfx("craft"); VH.Mods.toast("Прыжок на Батуте!"); }
 });
-// 2. Новый предмет: Посох Молнии (ID 130) — взрывает точку прицела!
 VH.Mods.registerItem(130, {
   name: "Посох Молнии",
   color: "#ffdd33",
   shape: "stick",
   dmg: 14,
-  onUse: ({ engine }) => {
-    const hit = engine.raycastBlock(24);
-    if (hit) { engine.explodeAt(hit.x, hit.y, hit.z, 2.6); }
-  }
+  onUse: ({ engine }) => { const h = engine.raycastBlock(24); if (h) engine.explodeAt(h.x, h.y, h.z, 2.6); }
 });
-// 3. Рецепт крафта и выдача командой /gadgets
 VH.Mods.registerRecipe(50, 4, [[7, 2], [118, 1]], "2 Доски + Изумруд -> 4 Батута");
-VH.Mods.registerCommand("gadgets", () => {
-  VH.Mods.give(50, 8); VH.Mods.give(130, 1);
-  VH.Mods.toast("Выданы Батут-Блок и Посох Молнии!");
-});
-// 4. Своя кнопка прямо поверх игрового HUD!
-VH.Mods.ui.addHudButton("btn-mod-jet", "⚡ БУСТ", () => {
-  VH.Engine.player.vy = 11;
-  VH.Engine.playSfx("craft");
-});`
-  },
-  {
-    id: "mod_moon_dim",
-    name: "Мод: Измерение ЛУНА (/moon) с низкой гравитацией",
-    enabled: false,
-    code:
+VH.Mods.registerCommand("gadgets", () => { VH.Mods.give(50, 8); VH.Mods.give(130, 1); VH.Mods.toast("Выданы Батут и Посох!"); });
+VH.Mods.ui.addHudButton("btn-mod-jet", "⚡ БУСТ", () => { VH.Engine.player.vy = 11; VH.Engine.playSfx("craft"); });`,
+        "textures/trampoline.json": JSON.stringify({ size: 16, pixels: [] }),
+        "models/gadget.vhmodel.json": JSON.stringify({ name: "gadget", bones: [{ name: "root", pivot: [0,0,0], cubes: [{ origin: [-3,0,-3], size: [6,12,6], color: "#ffdd33" }] }] }, null, 2),
+        "animations/gadget.vhanim.json": JSON.stringify({ duration: 1.0, loop: true, tracks: { root: [{ time: 0, rot: [0,0,0] }, { time: 1.0, rot: [0,360,0] }] } }, null, 2)
+      }
+    },
+    {
+      id: "proj_moon",
+      name: "Измерение ЛУНА (/moon)",
+      enabled: false,
+      files: {
+        "manifest.json": JSON.stringify({ id: "proj_moon", name: "Измерение Луна", version: "1.0", entry: "scripts/main.js" }, null, 2),
+        "scripts/main.js":
 `VH.Mods.registerDimension("moon", {
   name: "ЛУНА",
   skyColor: 0x050712,
@@ -185,38 +294,20 @@ VH.Mods.ui.addHudButton("btn-mod-jet", "⚡ БУСТ", () => {
   gravity: 6.8,
   generateColumn: (data, lx, lz, wx, wz, WORLD_H, perlin, idx) => {
     const h = Math.floor(20 + perlin.fbm2(wx * 0.02, wz * 0.02, 3) * 10);
-    for (let y = 0; y <= h; y++) {
-      data[idx(lx, y, lz)] = y === 0 ? 10 : (y === h ? 25 : 3);
-    }
+    for (let y = 0; y <= h; y++) data[idx(lx, y, lz)] = y === 0 ? 10 : (y === h ? 25 : 3);
   }
 });
-VH.Mods.registerCommand("moon", () => {
-  VH.Mods.switchDimension("moon");
-});`
-  },
-  {
-    id: "mod_veinminer",
-    name: "Супер-Кирка 3x3 (Алмазная кирка)",
-    enabled: false,
-    code:
-`VH.Mods.on("onBlockBreak", (e) => {
-  if (e.heldId === 109) {
-    for (let dx = -1; dx <= 1; dx++)
-      for (let dy = -1; dy <= 1; dy++)
-        if (dx || dy) VH.Mods.setBlock(e.x + dx, e.y + dy, e.z, 0);
-  }
-});`
-  }
-];
+VH.Mods.registerCommand("moon", () => VH.Mods.switchDimension("moon"));`
+      }
+    }
+  ];
+}
 
-// ============================================================================
-// 3. ЯДРО MODDING ENGINE (VH.modMgr + VH.Mods)
-// ============================================================================
 const ALL_HOOKS = [
   "onInit", "onWorldStart", "onTick",
   "onBlockBreak", "onBlockPlace", "onBlockInteract", "onItemUse",
   "onMobSpawn", "onMobKill", "onPlayerHurt", "onDimensionChange",
-  "onChat", "onKeyDown", "onNetPacket"
+  "onChat", "onNetPacket"
 ];
 
 class ModManager {
@@ -224,8 +315,9 @@ class ModManager {
     this.hooks = {};
     this._resetHooks();
     this.logs = [];
-    this.mods = this._loadMods();
-    this.runtime = null;
+    this.projects = createDefaultModProjects();
+    this.sessionMods = null; // Временные моды хоста при игре по сети!
+    this.worldModFilter = null; // Массив ID модов, выбранных для текущего мира (null = все enabled)
   }
 
   _resetHooks() {
@@ -233,71 +325,57 @@ class ModManager {
     ALL_HOOKS.forEach((h) => (this.hooks[h] = []));
   }
 
-  _loadMods() {
-    try {
-      const raw = localStorage.getItem("vh_user_mods_v21");
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return DEFAULT_MODS.slice();
+  async initFromDB() {
+    const saved = await VH.DB.get("mod_projects_v3", null);
+    if (Array.isArray(saved) && saved.length > 0) {
+      this.projects = saved;
+    } else {
+      await this.saveProjects();
+    }
+    this.reloadAll();
   }
 
-  saveMods() {
-    try { localStorage.setItem("vh_user_mods_v21", JSON.stringify(this.mods)); } catch {}
+  async saveProjects() {
+    await VH.DB.set("mod_projects_v3", this.projects);
+  }
+
+  getActiveProjects() {
+    if (this.sessionMods) return this.sessionMods;
+    if (Array.isArray(this.worldModFilter)) {
+      return this.projects.filter((p) => this.worldModFilter.includes(p.id));
+    }
+    return this.projects.filter((p) => p.enabled);
   }
 
   log(msg, isErr = false) {
     const line = (isErr ? "[ERR] " : "[MOD] ") + String(msg);
     this.logs.unshift(line);
-    if (this.logs.length > 30) this.logs.pop();
-    const box = document.getElementById("mod-console-log");
+    if (this.logs.length > 40) this.logs.pop();
+    const box = document.getElementById("studio-console");
     if (box) box.textContent = this.logs.join("\n");
-  }
-
-  addMod(name, code) {
-    const mod = { id: "mod_" + Date.now(), name: name || "Новый мод", enabled: true, code };
-    this.mods.push(mod);
-    this.saveMods();
-    this.reloadAll();
-    return mod;
-  }
-
-  updateMod(id, name, code) {
-    const m = this.mods.find((x) => x.id === id);
-    if (!m) return;
-    m.name = name || m.name;
-    m.code = code;
-    this.saveMods();
-    this.reloadAll();
-  }
-
-  toggleMod(id) {
-    const m = this.mods.find((x) => x.id === id);
-    if (!m) return;
-    m.enabled = !m.enabled;
-    this.saveMods();
-    this.reloadAll();
-  }
-
-  removeMod(id) {
-    this.mods = this.mods.filter((x) => x.id !== id);
-    this.saveMods();
-    this.reloadAll();
   }
 
   reloadAll() {
     this._resetHooks();
     VH.CUSTOM_COMMANDS = {};
+    VH.CUSTOM_MOBS = {};
+    VH.CUSTOM_DIMENSIONS = {};
     VH.Mods.ui.clearModUI();
     this.logs = [];
 
-    for (const m of this.mods) {
-      if (!m.enabled) continue;
+    const active = this.getActiveProjects();
+    for (const proj of active) {
       try {
-        const fn = new Function("VH", "Engine", "Mods", "THREE", m.code);
-        fn(VH, VH.Engine, VH.Mods, window.THREE);
-        this.log("Загружен: " + m.name);
+        // Исполняем все .js файлы проекта (сначала библиотеки, затем scripts/main.js)
+        const files = proj.files || {};
+        const jsPaths = Object.keys(files).filter((k) => k.endsWith(".js")).sort((a, b) => (a === "scripts/main.js" ? 1 : b === "scripts/main.js" ? -1 : a.localeCompare(b)));
+        for (const jp of jsPaths) {
+          const fn = new Function("VH", "Engine", "Mods", "THREE", "Project", files[jp]);
+          fn(VH, VH.Engine, VH.Mods, window.THREE, proj);
+        }
+        this.log("Активен мод: " + proj.name);
       } catch (err) {
-        this.log(m.name + ": " + err.message, true);
+        this.log(proj.name + ": " + err.message, true);
       }
     }
     this.emit("onInit", { engine: VH.Engine });
@@ -307,33 +385,25 @@ class ModManager {
     const list = this.hooks[evName];
     if (!list || list.length === 0) return payload;
     for (const cb of list) {
-      try { cb(payload); } catch (err) { this.log(evName + " error: " + err.message, true); }
+      try { cb(payload); } catch (err) { this.log(evName + ": " + err.message, true); }
     }
     return payload;
   }
 }
 
 const modMgr = new ModManager();
-
 VH.MultiplayerManager = MultiplayerManager;
 VH.modMgr = modMgr;
 
-// ПОЛНЫЙ API ДЛЯ МОДОВ (МОЖНО ДЕЛАТЬ ВСЁ ЧТО УГОДНО!)
 VH.Mods = {
-  // 1. Хуки событий (можно отменять через e.cancel = true!)
-  on: (ev, cb) => {
-    if (!modMgr.hooks[ev]) modMgr.hooks[ev] = [];
-    modMgr.hooks[ev].push(cb);
-  },
+  on: (ev, cb) => { if (!modMgr.hooks[ev]) modMgr.hooks[ev] = []; modMgr.hooks[ev].push(cb); },
   log: (msg) => modMgr.log(msg, false),
-
-  // 2. Регистрация новых Блоков (с текстурой, физикой и событиями!)
   registerBlock: (id, def) => {
     const numId = Number(id);
     if (!numId || numId < 1 || numId > 99) return;
     let faces = def.faces;
     if (!faces) {
-      const tileIdx = VH.registerAtlasTile ? VH.registerAtlasTile(def.draw || def.color || "#2ed573") : 3;
+      const tileIdx = VH.registerAtlasTile ? VH.registerAtlasTile(def.pixels || def.draw || def.color || "#2ed573") : 3;
       faces = [tileIdx, tileIdx, tileIdx];
     }
     VH.ITEMS_DB[numId] = Object.assign({
@@ -342,13 +412,11 @@ VH.Mods = {
       hard: def.hard !== undefined ? def.hard : 1.2,
       drop: def.drop !== undefined ? def.drop : numId,
       transparent: Boolean(def.transparent),
-      light: Boolean(def.light),
+      light: def.light || 0,
       faces
     }, def, { faces });
-    if (VH.Engine && VH.Engine.renderHotbar) VH.Engine.renderHotbar();
+    if (VH.Engine?.renderHotbar) VH.Engine.renderHotbar();
   },
-
-  // 3. Регистрация новых Предметов / Оружия / Инструментов / Гаджетов!
   registerItem: (id, def) => {
     const numId = Number(id);
     if (!numId || numId < 100) return;
@@ -356,29 +424,22 @@ VH.Mods = {
       name: "Мод-предмет #" + numId,
       item: true,
       color: "#2ed573",
-      shape: "gem"
+      shape: "gem",
+      pixelIcon: def.pixels || null
     }, def, { item: true });
-    if (VH.Engine && VH.Engine.renderHotbar) VH.Engine.renderHotbar();
+    if (VH.Engine?.renderHotbar) VH.Engine.renderHotbar();
   },
-
-  // 4. Регистрация новых 3D Мобов и их спавн!
   registerMob: (type, def) => { VH.CUSTOM_MOBS[type] = def; },
   spawnMob: (type, x, y, z) => {
-    if (!VH.Engine || !VH.Engine.mobMgr) return null;
+    if (!VH.Engine?.mobMgr) return null;
     const p = VH.Engine.player;
     return VH.Engine.mobMgr.spawnMob(type, x ?? p.x + 2, y ?? p.y + 1, z ?? p.z + 2);
   },
-
-  // 5. Регистрация новых Измерений (со своим небом, гравитацией и генератором!)
   registerDimension: (id, def) => { VH.CUSTOM_DIMENSIONS[id] = def; },
   switchDimension: (id) => { if (VH.Engine?.switchDimension) VH.Engine.switchDimension(id); },
-
-  // 6. Рецепты крафта, переплавки и команды чата
   registerRecipe: (outId, cnt, req, desc) => { if (VH.Engine?.CRAFT_RECIPES) VH.Engine.CRAFT_RECIPES.push({ out: outId, cnt, req, desc }); },
   registerSmelt:  (outId, cnt, req, desc) => { if (VH.Engine?.SMELT_RECIPES) VH.Engine.SMELT_RECIPES.push({ out: outId, cnt, req, desc }); },
   registerCommand: (name, handler) => { VH.CUSTOM_COMMANDS[(name.startsWith("/") ? name.slice(1) : name).toLowerCase()] = handler; },
-
-  // 7. Мир, Игрок, Сеть, Звук
   toast: (msg) => { if (VH.Engine?.showToast) VH.Engine.showToast(msg); },
   chat: (sender, msg) => { if (VH.Engine?.addChatLine) VH.Engine.addChatLine(sender, msg); },
   give: (id, cnt = 1) => { if (VH.Engine?.addInv) VH.Engine.addInv(id, cnt); },
@@ -387,17 +448,13 @@ VH.Mods = {
   explode: (x, y, z, r = 2.5) => { if (VH.Engine?.explodeAt) VH.Engine.explodeAt(x, y, z, r); },
   buildPortal: () => { if (VH.Engine?.buildPortalFront) VH.Engine.buildPortalFront(); },
   sendNetPacket: (ch, data) => { if (VH.Engine?.mpMgr) VH.Engine.mpMgr.sendModPacket(ch, data); },
-
-  // 8. ПОЛНЫЙ ДОСТУП К UI И HUD (СВОИ КНОПКИ, ВИДЖЕТЫ И ОКНА!)
   ui: {
     addHudButton: (id, label, onClick, cssText = "") => {
       const host = document.getElementById("mod-hud-layer");
       if (!host) return null;
       const old = document.getElementById(id); if (old) old.remove();
       const btn = document.createElement("button");
-      btn.id = id;
-      btn.className = "mc-hud-btn mod-hud-btn";
-      btn.textContent = label;
+      btn.id = id; btn.className = "mc-hud-btn mod-hud-btn"; btn.textContent = label;
       if (cssText) btn.style.cssText += ";" + cssText;
       btn.addEventListener("touchstart", (e) => { e.preventDefault(); onClick(VH.Engine); }, { passive: false });
       btn.addEventListener("click", () => onClick(VH.Engine));
@@ -409,9 +466,7 @@ VH.Mods = {
       if (!host) return null;
       const old = document.getElementById(id); if (old) old.remove();
       const div = document.createElement("div");
-      div.id = id;
-      div.className = "mod-hud-widget";
-      div.innerHTML = html;
+      div.id = id; div.className = "mod-hud-widget"; div.innerHTML = html;
       if (cssText) div.style.cssText += ";" + cssText;
       host.appendChild(div);
       return div;
@@ -436,14 +491,8 @@ VH.Mods = {
       if (host) host.innerHTML = "";
     }
   },
-
-  // 9. Постоянное хранилище данных для модов
   storage: {
-    get: (key, defVal = null) => {
-      try { const v = localStorage.getItem("vh_moddata_" + key); return v !== null ? JSON.parse(v) : defVal; } catch { return defVal; }
-    },
-    set: (key, val) => {
-      try { localStorage.setItem("vh_moddata_" + key, JSON.stringify(val)); } catch {}
-    }
+    get: (key, defVal = null) => VH.DB.get("moddata_" + key, defVal),
+    set: (key, val) => VH.DB.set("moddata_" + key, val)
   }
 };
