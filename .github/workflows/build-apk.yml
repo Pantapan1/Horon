@@ -13,13 +13,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -50,14 +50,16 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure App Icon, Landscape Fullscreen & Storage Permissions
+      - name: Configure App Icon & Landscape Fullscreen
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="sensorLandscape"/' "$MANIFEST"
           if [ -f "icon.png" ]; then
-            for dir in android/app/src/main/res/mipmap-*; do
-              cp -f icon.png "$dir/ic_launcher.png" || true
-              cp -f icon.png "$dir/ic_launcher_round.png" || true
+            rm -rf android/app/src/main/res/mipmap-anydpi-v26
+            for dir in android/app/src/main/res/mipmap-*dpi; do
+              rm -f "$dir/ic_launcher_foreground.png"
+              cp -f icon.png "$dir/ic_launcher.png"
+              cp -f icon.png "$dir/ic_launcher_round.png"
             done
           fi
 
