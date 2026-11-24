@@ -1,4 +1,4 @@
-name: Build VoxelHorizon APK
+name: Build VoxelHorizon v2.1 APK
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Prepare www bundle (with offline Three.js)
+      - name: Prepare www bundle (offline Three.js + PeerJS)
         run: npm run prepare-www
 
       - name: Generate Android project via Capacitor
@@ -37,7 +37,7 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Set Fullscreen Landscape in AndroidManifest
+      - name: Configure Landscape Fullscreen & Internet Permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="sensorLandscape"/' "$MANIFEST"
@@ -48,8 +48,8 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload VoxelHorizon APK
+      - name: Upload VoxelHorizon v2.1 APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoxelHorizon-v1.0-APK
+          name: VoxelHorizon-v2.1-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
