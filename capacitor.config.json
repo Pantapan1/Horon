@@ -1,0 +1,10 @@
+{
+  "appId": "com.voxelhorizon.sandbox",
+  "appName": "VoxelHorizon",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0b1018"
+  }
+}

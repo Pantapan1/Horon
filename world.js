@@ -1,0 +1,321 @@
+// ============================================================================
+// VOXELHORIZON — ГЕНЕРАЦИЯ МИРА (БИОМЫ, ПЕЩЕРЫ, РУДЫ, ЧАНКИ, СОХРАНЕНИЕ)
+// ============================================================================
+window.VH = window.VH || {};
+
+const CHUNK_SIZE = 16;
+const WORLD_H = 64;
+const SEA_LEVEL = 22;
+
+class FastNoise {
+  constructor(seed) {
+    this.seed = seed | 0;
+  }
+  hash2(x, z) {
+    let n = (x * 374761393 + z * 668265263 + this.seed * 1442695041) | 0;
+    n = (n ^ (n >> 13)) * 1274126177;
+    return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+  }
+  smooth2(x, z) {
+    const ix = Math.floor(x), iz = Math.floor(z);
+    const fx = x - ix, fz = z - iz;
+    const ux = fx * fx * (3 - 2 * fx);
+    const uz = fz * fz * (3 - 2 * fz);
+    const a = this.hash2(ix, iz);
+    const b = this.hash2(ix + 1, iz);
+    const c = this.hash2(ix, iz + 1);
+    const d = this.hash2(ix + 1, iz + 1);
+    return a + (b - a) * ux + (c - a) * uz + (a - b - c + d) * ux * uz;
+  }
+  fbm(x, z, octaves = 3) {
+    let v = 0, amp = 0.5, freq = 1, norm = 0;
+    for (let i = 0; i < octaves; i++) {
+      v += this.smooth2(x * freq, z * freq) * amp;
+      norm += amp;
+      amp *= 0.5;
+      freq *= 2.02;
+    }
+    return v / norm;
+  }
+}
+
+class VoxelWorld {
+  constructor(scene, seed, savedMods = {}) {
+    this.scene = scene;
+    this.seed = seed;
+    this.noise = new FastNoise(seed);
+    this.chunks = new Map();       // "cx,cz" -> { data: Uint8Array, mesh, waterMesh }
+    this.modifications = Object.assign({}, savedMods); // "x,y,z" -> blockId
+
+    this.solidMat = new THREE.MeshLambertMaterial({
+      map: VH.atlasTexture,
+      vertexColors: true,
+      alphaTest: 0.45
+    });
+    this.waterMat = new THREE.MeshLambertMaterial({
+      map: VH.atlasTexture,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide
+    });
+  }
+
+  key(cx, cz) { return cx + "," + cz; }
+
+  getBiome(wx, wz) {
+    const temp = this.noise.fbm(wx * 0.008 + 100, wz * 0.008 + 100, 2);
+    const moist = this.noise.fbm(wx * 0.009 - 50, wz * 0.009 - 50, 2);
+    if (temp > 0.66) return "desert";
+    if (temp < 0.34) return "snow";
+    if (moist > 0.55) return "forest";
+    return "plains";
+  }
+
+  getTerrainHeight(wx, wz) {
+    const base = this.noise.fbm(wx * 0.018, wz * 0.018, 3);
+    const hill = Math.pow(this.noise.fbm(wx * 0.007 + 33, wz * 0.007 - 21, 2), 2);
+    return Math.floor(17 + base * 16 + hill * 18);
+  }
+
+  generateChunkData(cx, cz) {
+    const data = new Uint8Array(CHUNK_SIZE * WORLD_H * CHUNK_SIZE);
+    const idx = (x, y, z) => (y * CHUNK_SIZE + z) * CHUNK_SIZE + x;
+    const baseX = cx * CHUNK_SIZE;
+    const baseZ = cz * CHUNK_SIZE;
+
+    for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        const wx = baseX + lx;
+        const wz = baseZ + lz;
+        const biome = this.getBiome(wx, wz);
+        const h = Math.min(WORLD_H - 8, this.getTerrainHeight(wx, wz));
+
+        for (let y = 0; y < WORLD_H; y++) {
+          if (y === 0) {
+            data[idx(lx, y, lz)] = 10; // Bedrock
+          } else if (y < h - 3) {
+            // Пещеры
+            const cave = this.noise.smooth2(wx * 0.09 + y * 0.14, wz * 0.09 - y * 0.12);
+            if (y > 3 && y < h - 5 && cave > 0.78) {
+              data[idx(lx, y, lz)] = 0;
+            } else {
+              // Руды
+              const oreR = this.noise.hash2(wx * 3 + y * 13, wz * 5 - y * 7);
+              if (y < 14 && oreR > 0.992) data[idx(lx, y, lz)] = 14;      // Diamond
+              else if (y < 20 && oreR > 0.982) data[idx(lx, y, lz)] = 13; // Gold
+              else if (y < 34 && oreR > 0.962) data[idx(lx, y, lz)] = 12; // Iron
+              else if (oreR > 0.935) data[idx(lx, y, lz)] = 11;           // Coal
+              else data[idx(lx, y, lz)] = 3;                              // Stone
+            }
+          } else if (y < h) {
+            data[idx(lx, y, lz)] = (biome === "desert" || h <= SEA_LEVEL + 1) ? 8 : 2;
+          } else if (y === h) {
+            if (biome === "desert" || h <= SEA_LEVEL) data[idx(lx, y, lz)] = 8;
+            else if (biome === "snow") data[idx(lx, y, lz)] = 19;
+            else data[idx(lx, y, lz)] = 1;
+          } else if (y <= SEA_LEVEL) {
+            data[idx(lx, y, lz)] = (biome === "snow" && y === SEA_LEVEL) ? 20 : 9;
+          }
+        }
+
+        // Деревья и Кактусы (внутри чанка, чтобы крона не обрезалась)
+        if (h > SEA_LEVEL + 1 && lx >= 2 && lx <= 13 && lz >= 2 && lz <= 13) {
+          const r = this.noise.hash2(wx * 19, wz * 23);
+          if (biome === "desert" && r > 0.985) {
+            for (let cy = 1; cy <= 3; cy++) data[idx(lx, h + cy, lz)] = 21;
+          } else if ((biome === "forest" && r > 0.962) || (biome === "plains" && r > 0.991) || (biome === "snow" && r > 0.982)) {
+            const th = 4 + ((wx + wz) & 1);
+            for (let ty = 1; ty <= th; ty++) data[idx(lx, h + ty, lz)] = 5;
+            for (let dy = th - 1; dy <= th + 1; dy++) {
+              const rad = dy === th + 1 ? 1 : 2;
+              for (let dx = -rad; dx <= rad; dx++) {
+                for (let dz = -rad; dz <= rad; dz++) {
+                  if (dx === 0 && dz === 0 && dy <= th) continue;
+                  if (Math.abs(dx) === 2 && Math.abs(dz) === 2 && dy === th) continue;
+                  if (h + dy < WORLD_H) data[idx(lx + dx, h + dy, lz + dz)] = 6;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Применяем сохранённые изменения игрока в этом чанке
+    for (const [mk, bId] of Object.entries(this.modifications)) {
+      const parts = mk.split(",");
+      const mx = +parts[0], my = +parts[1], mz = +parts[2];
+      if (Math.floor(mx / CHUNK_SIZE) === cx && Math.floor(mz / CHUNK_SIZE) === cz && my >= 0 && my < WORLD_H) {
+        const lx = ((mx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const lz = ((mz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        data[idx(lx, my, lz)] = bId;
+      }
+    }
+    return data;
+  }
+
+  getBlock(wx, wy, wz) {
+    const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
+    if (y < 0 || y >= WORLD_H) return 0;
+    const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE);
+    const ch = this.chunks.get(this.key(cx, cz));
+    if (!ch) return 0;
+    const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    return ch.data[(y * CHUNK_SIZE + lz) * CHUNK_SIZE + lx];
+  }
+
+  setBlock(wx, wy, wz, bId) {
+    const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
+    if (y <= 0 || y >= WORLD_H - 1) return;
+    const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE);
+    const ch = this.chunks.get(this.key(cx, cz));
+    if (!ch) return;
+    const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    ch.data[(y * CHUNK_SIZE + lz) * CHUNK_SIZE + lx] = bId;
+    this.modifications[x + "," + y + "," + z] = bId;
+
+    this.rebuildChunkMesh(cx, cz);
+    if (lx === 0) this.rebuildChunkMesh(cx - 1, cz);
+    if (lx === CHUNK_SIZE - 1) this.rebuildChunkMesh(cx + 1, cz);
+    if (lz === 0) this.rebuildChunkMesh(cx, cz - 1);
+    if (lz === CHUNK_SIZE - 1) this.rebuildChunkMesh(cx, cz + 1);
+  }
+
+  ensureChunk(cx, cz) {
+    const k = this.key(cx, cz);
+    if (this.chunks.has(k)) return;
+    const data = this.generateChunkData(cx, cz);
+    this.chunks.set(k, { data, mesh: null, waterMesh: null });
+    this.rebuildChunkMesh(cx, cz);
+  }
+
+  updateAround(px, pz, radius) {
+    const pcx = Math.floor(px / CHUNK_SIZE);
+    const pcz = Math.floor(pz / CHUNK_SIZE);
+    const needed = new Set();
+
+    // Создаём не более 2 чанков за кадр для плавных 60 FPS на Android!
+    let built = 0;
+    for (let r = 0; r <= radius; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          const cx = pcx + dx, cz = pcz + dz;
+          const k = this.key(cx, cz);
+          needed.add(k);
+          if (!this.chunks.has(k) && built < 2) {
+            this.ensureChunk(cx, cz);
+            built++;
+          }
+        }
+      }
+    }
+
+    // Выгружаем далёкие чанки
+    for (const [k, ch] of this.chunks.entries()) {
+      if (!needed.has(k)) {
+        if (ch.mesh) { this.scene.remove(ch.mesh); ch.mesh.geometry.dispose(); }
+        if (ch.waterMesh) { this.scene.remove(ch.waterMesh); ch.waterMesh.geometry.dispose(); }
+        this.chunks.delete(k);
+      }
+    }
+  }
+
+  rebuildChunkMesh(cx, cz) {
+    const ch = this.chunks.get(this.key(cx, cz));
+    if (!ch) return;
+    if (ch.mesh) { this.scene.remove(ch.mesh); ch.mesh.geometry.dispose(); ch.mesh = null; }
+    if (ch.waterMesh) { this.scene.remove(ch.waterMesh); ch.waterMesh.geometry.dispose(); ch.waterMesh = null; }
+
+    const sPos = [], sNorm = [], sUv = [], sCol = [], sIdx = [];
+    const wPos = [], wNorm = [], wUv = [], wCol = [], wIdx = [];
+
+    const baseX = cx * CHUNK_SIZE;
+    const baseZ = cz * CHUNK_SIZE;
+    const stepUV = 1 / VH.ATLAS_COLS;
+    const eps = 0.002;
+
+    const FACES = [
+      { dir: [ 0,  1,  0], fIdx: 0, shade: 1.00, verts: [[0,1,1],[1,1,1],[1,1,0],[0,1,0]] },
+      { dir: [ 0, -1,  0], fIdx: 2, shade: 0.58, verts: [[0,0,0],[1,0,0],[1,0,1],[0,0,1]] },
+      { dir: [ 1,  0,  0], fIdx: 1, shade: 0.84, verts: [[1,0,1],[1,0,0],[1,1,0],[1,1,1]] },
+      { dir: [-1,  0,  0], fIdx: 1, shade: 0.78, verts: [[0,0,0],[0,0,1],[0,1,1],[0,1,0]] },
+      { dir: [ 0,  0,  1], fIdx: 1, shade: 0.90, verts: [[0,0,1],[1,0,1],[1,1,1],[0,1,1]] },
+      { dir: [ 0,  0, -1], fIdx: 1, shade: 0.72, verts: [[1,0,0],[0,0,0],[0,1,0],[1,1,0]] }
+    ];
+
+    for (let y = 0; y < WORLD_H; y++) {
+      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const bId = ch.data[(y * CHUNK_SIZE + lz) * CHUNK_SIZE + lx];
+          if (bId === 0) continue;
+          const info = VH.ITEMS_DB[bId];
+          if (!info || !info.faces) continue;
+
+          const wx = baseX + lx, wz = baseZ + lz;
+          const isWater = bId === 9;
+
+          for (const face of FACES) {
+            const nx = wx + face.dir[0], ny = y + face.dir[1], nz = wz + face.dir[2];
+            const nbId = this.getBlock(nx, ny, nz);
+            const nbInfo = VH.ITEMS_DB[nbId];
+
+            if (isWater) {
+              if (nbId === 9 || (nbInfo && nbInfo.solid && !nbInfo.transparent)) continue;
+            } else {
+              if (nbId === bId && info.transparent) continue;
+              if (nbInfo && nbInfo.solid && !nbInfo.transparent) continue;
+            }
+
+            const tile = info.faces[face.fIdx];
+            const u0 = (tile % VH.ATLAS_COLS) * stepUV + eps;
+            const v0 = Math.floor(tile / VH.ATLAS_COLS) * stepUV + eps;
+            const u1 = u0 + stepUV - eps * 2;
+            const v1 = v0 + stepUV - eps * 2;
+
+            const posA = isWater ? wPos : sPos;
+            const nrmA = isWater ? wNorm : sNorm;
+            const uvA  = isWater ? wUv : sUv;
+            const colA = isWater ? wCol : sCol;
+            const idxA = isWater ? wIdx : sIdx;
+            const vStart = posA.length / 3;
+
+            const sh = info.light ? 1.15 : face.shade;
+            for (let vi = 0; vi < 4; vi++) {
+              const v = face.verts[vi];
+              const vy = isWater && v[1] === 1 ? 0.88 : v[1];
+              posA.push(wx + v[0], y + vy, wz + v[2]);
+              nrmA.push(face.dir[0], face.dir[1], face.dir[2]);
+              colA.push(sh, sh, sh);
+            }
+            uvA.push(u0, v1, u1, v1, u1, v0, u0, v0);
+            idxA.push(vStart, vStart + 1, vStart + 2, vStart, vStart + 2, vStart + 3);
+          }
+        }
+      }
+    }
+
+    const buildMesh = (pos, norm, uv, col, idx, mat) => {
+      if (pos.length === 0) return null;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute("normal", new THREE.Float32BufferAttribute(norm, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+      geo.setIndex(idx);
+      const mesh = new THREE.Mesh(geo, mat);
+      this.scene.add(mesh);
+      return mesh;
+    };
+
+    ch.mesh = buildMesh(sPos, sNorm, sUv, sCol, sIdx, this.solidMat);
+    ch.waterMesh = buildMesh(wPos, wNorm, wUv, wCol, wIdx, this.waterMat);
+  }
+}
+
+VH.CHUNK_SIZE = CHUNK_SIZE;
+VH.WORLD_H = WORLD_H;
+VH.SEA_LEVEL = SEA_LEVEL;
+VH.VoxelWorld = VoxelWorld;

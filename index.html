@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>VoxelHorizon — 3D Песочница</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- ГЛАВНОЕ МЕНЮ -->
+  <div id="main-menu" class="overlay-screen">
+    <div class="menu-card">
+      <div class="logo-badge">VOXEL<span>HORIZON</span></div>
+      <div class="logo-sub">Оригинальная 3D-песочница • v1.0</div>
+
+      <div class="menu-form">
+        <label>Название мира</label>
+        <input id="world-name-input" type="text" value="Мой Мир" maxlength="24" />
+        <label>Сид генерации (пусто = случайный)</label>
+        <input id="world-seed-input" type="text" placeholder="Например: 112233" maxlength="16" />
+
+        <div class="mode-row">
+          <button id="mode-survival" class="mode-btn active">Выживание</button>
+          <button id="mode-creative" class="mode-btn">Творчество</button>
+        </div>
+      </div>
+
+      <button id="btn-play" class="primary-btn">ИГРАТЬ</button>
+      <div id="saved-worlds-list" class="saved-list"></div>
+
+      <div class="menu-footer">
+        <button id="btn-open-settings" class="sec-btn">Настройки графики</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- НАСТРОЙКИ -->
+  <div id="settings-modal" class="overlay-screen hidden">
+    <div class="menu-card small-card">
+      <h2>Настройки</h2>
+      <div class="setting-row">
+        <span>Дальность прорисовки: <b id="lbl-render-dist">3</b> чанка</span>
+        <input id="inp-render-dist" type="range" min="2" max="5" value="3" />
+      </div>
+      <div class="setting-row">
+        <span>Чувствительность камеры: <b id="lbl-sens">1.0</b></span>
+        <input id="inp-sens" type="range" min="0.4" max="2.2" step="0.1" value="1.0" />
+      </div>
+      <div class="setting-row">
+        <span>Звуковые эффекты</span>
+        <input id="inp-sound" type="checkbox" checked />
+      </div>
+      <button id="btn-close-settings" class="primary-btn">Сохранить</button>
+    </div>
+  </div>
+
+  <!-- ИГРОВОЙ HUD -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="mine-ring" class="hidden"><div id="mine-fill"></div></div>
+
+    <!-- Верхняя панель статуса -->
+    <div id="top-bar">
+      <div id="coords-box">X:0 Y:0 Z:0 | День 1</div>
+      <div id="top-actions">
+        <button id="btn-craft-open" class="hud-chip">Крафт</button>
+        <button id="btn-inv-open" class="hud-chip">Рюкзак</button>
+        <button id="btn-pause" class="hud-chip">Меню</button>
+      </div>
+    </div>
+
+    <div id="toast-msg" class="hidden"></div>
+
+    <!-- Полосы ХП и Голода (Выживание) -->
+    <div id="status-bars">
+      <div class="stat-pill"><span class="stat-ico hp">♥</span><div class="bar-track"><div id="hp-fill" class="bar-fill hp-fill"></div></div><span id="hp-text">20</span></div>
+      <div class="stat-pill"><span class="stat-ico fd">◆</span><div class="bar-track"><div id="fd-fill" class="bar-fill fd-fill"></div></div><span id="fd-text">20</span></div>
+    </div>
+
+    <!-- Хотбар (9 слотов) -->
+    <div id="hotbar"></div>
+
+    <!-- Мобильное сенсорное управление -->
+    <div id="touch-controls">
+      <div id="joy-zone">
+        <div id="joy-base"><div id="joy-knob"></div></div>
+      </div>
+      <div id="right-btns">
+        <button id="btn-touch-break" class="act-btn act-break">ЛОМАТЬ</button>
+        <button id="btn-touch-place" class="act-btn act-place">СТАВИТЬ</button>
+        <button id="btn-touch-jump"  class="act-btn act-jump">▲</button>
+        <button id="btn-touch-fly"   class="act-btn act-fly hidden">ПОЛЁТ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- МОДАЛКА КРАФТА / ПЕЧИ / ИНВЕНТАРЯ -->
+  <div id="craft-modal" class="overlay-screen hidden">
+    <div class="menu-card wide-card">
+      <div class="modal-head">
+        <h2 id="modal-title">Верстак и Рецепты</h2>
+        <button id="btn-close-craft" class="hud-chip">✕</button>
+      </div>
+      <div class="tabs-row">
+        <button id="tab-craft" class="tab-btn active">Крафт (2×2 / 3×3)</button>
+        <button id="tab-smelt" class="tab-btn">Переплавка (Печь)</button>
+        <button id="tab-bag"   class="tab-btn">Весь Инвентарь</button>
+      </div>
+      <div id="modal-content" class="recipes-grid"></div>
+    </div>
+  </div>
+
+  <!-- ПАУЗА -->
+  <div id="pause-modal" class="overlay-screen hidden">
+    <div class="menu-card small-card">
+      <h2>Пауза</h2>
+      <button id="btn-resume" class="primary-btn">Продолжить игру</button>
+      <button id="btn-save-now" class="sec-btn">Сохранить мир</button>
+      <button id="btn-toggle-mode" class="sec-btn">Сменить режим (Выживание / Творчество)</button>
+      <button id="btn-pause-settings" class="sec-btn">Настройки</button>
+      <button id="btn-exit-menu" class="danger-btn">Выйти в главное меню</button>
+    </div>
+  </div>
+
+  <!-- ЭКРАН СМЕРТИ -->
+  <div id="death-modal" class="overlay-screen hidden">
+    <div class="menu-card small-card">
+      <h2 style="color:#ff5c6c">Вы погибли!</h2>
+      <p style="color:#a7b6c8;margin:8px 0 18px">Вы потеряли часть опыта, но можете возродиться на спавне.</p>
+      <button id="btn-respawn" class="primary-btn">Возродиться</button>
+    </div>
+  </div>
+
+  <!-- Загрузка Three.js (офлайн внутри APK + резервный CDN для браузера) -->
+  <script src="three.min.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://unpkg.com/three@0.149.0/build/three.min.js"><\/script>');
+    }
+  </script>
+  <script src="textures.js"></script>
+  <script src="world.js"></script>
+  <script src="entities.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
