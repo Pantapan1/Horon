@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>VoxelHorizon v3.0 — Rust-WASM + Mod Studio</title>
+  <title>VoxelHorizon v3.2 — Anime Edition + Mod Hub + Rust-WASM</title>
+  <link rel="icon" type="image/png" href="icon.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="anime-ui">
   <canvas id="game-canvas"></canvas>
   <div id="underwater-tint" class="hidden"></div>
   <div id="portal-tint" class="hidden"></div>
@@ -16,7 +17,7 @@
     <div class="mc-panorama"></div>
     <div class="mc-title-wrap">
       <div class="mc-logo">VOXELHORIZON</div>
-      <div class="mc-splash">v3.0 • Rust-WASM • Студия Модов • Ад • P2P Сеть!</div>
+      <div class="mc-splash">v3.2 Anime Edition • Хаб Модов • 3D Скины • P2P Сеть!</div>
     </div>
 
     <div class="mc-menu-layout">
@@ -27,14 +28,14 @@
         <button id="btn-open-settings" class="mc-btn">Настройки</button>
       </div>
       <div class="mc-skin-preview-box">
-        <canvas id="menu-skin-canvas" width="96" height="144"></canvas>
-        <div id="menu-skin-name">Скин: Искатель</div>
-        <button id="btn-open-skins" class="mc-btn small">Гардероб (Скины)</button>
+        <canvas id="menu-skin-canvas" width="110" height="150"></canvas>
+        <div id="menu-skin-name">Офицер Кицунэ</div>
+        <button id="btn-open-skins" class="mc-btn small">Гардероб (3D Скины)</button>
       </div>
     </div>
   </div>
 
-  <!-- МЕНЮ МИРОВ, СОЗДАНИЯ МИРА И ВЫБОРА МОДОВ ДЛЯ МИРА -->
+  <!-- МЕНЮ МИРОВ И СОЗДАНИЯ МИРА -->
   <div id="worlds-modal" class="mc-screen hidden">
     <div class="mc-panel wide">
       <div class="mc-panel-head">
@@ -62,61 +63,59 @@
     </div>
   </div>
 
-  <!-- ГАРДЕРОБ (СКИНЫ) -->
+  <!-- ГАРДЕРОБ (ЖИВОЙ 3D ПРЕДПРОСМОТР СКИНОВ + СВОЙ PNG) -->
   <div id="skins-modal" class="mc-screen hidden">
     <div class="mc-panel wide">
       <div class="mc-panel-head">
-        <span>Выбор Скина</span>
+        <span>Гардероб — 3D Скины (синхронизируются в сети)</span>
         <button id="btn-close-skins" class="mc-btn tiny">✕</button>
       </div>
-      <div id="skins-grid" class="mc-skins-grid"></div>
-      <div class="mc-row" style="margin-top:8px">
-        <label class="mc-btn small" style="text-align:center;cursor:pointer">
-          Загрузить свой PNG-скин
-          <input id="inp-custom-skin" type="file" accept="image/png" class="hidden" />
-        </label>
-      </div>
-    </div>
-  </div>
-
-  <!-- МУЛЬТИПЛЕЕР (P2P + АВТОПОДКАЧКА МОДОВ ХОСТА) -->
-  <div id="mp-modal" class="mc-screen hidden">
-    <div class="mc-panel">
-      <div class="mc-panel-head">
-        <span>Мультиплеер (P2P + Авто-Моды)</span>
-        <button id="btn-close-mp" class="mc-btn tiny">✕</button>
-      </div>
-      <div class="mc-field-lbl">Ваш никнейм:</div>
-      <input id="mp-nick-input" class="mc-input" type="text" value="Игрок" maxlength="16" />
-      <div class="mc-row" style="margin-top:6px">
-        <button id="btn-mp-host" class="mc-btn small green">Создать комнату</button>
-      </div>
-      <div id="mp-host-status" class="mc-status-box">Нажмите «Создать комнату» или введите код друга. Активные моды передаются гостю автоматически!</div>
-      <div class="mc-field-lbl">Код комнаты друга:</div>
-      <div class="mc-row">
-        <input id="mp-join-code" class="mc-input" type="text" placeholder="VH-4821" maxlength="12" />
-        <button id="btn-mp-join" class="mc-btn small">Войти</button>
-      </div>
-      <!-- Запрос автоподкачки модов от хоста -->
-      <div id="mp-mods-prompt" class="mc-status-box hidden" style="border-color:#ffff55;color:#ffff55">
-        <div id="mp-mods-prompt-txt">Хост использует моды!</div>
-        <div class="mc-row" style="margin-top:6px">
-          <button id="btn-mp-accept-mods" class="mc-btn tiny green">Подкачать на сессию</button>
-          <button id="btn-mp-decline-mods" class="mc-btn tiny red">Отмена</button>
+      <div class="wardrobe-layout">
+        <div class="wardrobe-3d-box">
+          <canvas id="wardrobe-3d-canvas" width="180" height="230"></canvas>
+          <div style="font-size:10px;color:#333;margin-top:3px">Проведите пальцем для вращения</div>
+        </div>
+        <div style="flex:1">
+          <div id="skins-grid" class="mc-skins-grid"></div>
+          <div class="mc-row" style="margin-top:8px">
+            <label class="mc-btn small green" style="text-align:center;cursor:pointer">
+              📁 Загрузить свой PNG-скин (64×64)
+              <input id="inp-custom-skin" type="file" accept="image/png" class="hidden" />
+            </label>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ВСТРОЕННАЯ СТУДИЯ МОДОВ (.VHMOD IDE: КОД, 2D ПИКСЕЛЬ-АРТ, 3D МОДЕЛЛЕР, АНИМАЦИИ) -->
+  <!-- МУЛЬТИПЛЕЕР (P2P + ПОЛНАЯ СИНХРОНИЗАЦИЯ МИРА, МОБОВ, СУНДУКОВ, ПЕЧЕЙ И МОДОВ) -->
+  <div id="mp-modal" class="mc-screen hidden">
+    <div class="mc-panel">
+      <div class="mc-panel-head">
+        <span>Мультиплеер (P2P Синхронизация)</span>
+        <button id="btn-close-mp" class="mc-btn tiny">✕</button>
+      </div>
+      <div class="mc-field-lbl">Ваш никнейм:</div>
+      <input id="mp-nick-input" class="mc-input" type="text" value="Игрок" maxlength="16" />
+      <div class="mc-row" style="margin-top:6px">
+        <button id="btn-mp-host" class="mc-btn small green">Создать комнату (Хост)</button>
+      </div>
+      <div id="mp-host-status" class="mc-status-box">При входе друга автоматически синхронизируются: мир, блоки, мобы, сундуки, печи, дроп, 3D-скины и моды!</div>
+      <div class="mc-field-lbl">Код комнаты друга:</div>
+      <div class="mc-row">
+        <input id="mp-join-code" class="mc-input" type="text" placeholder="VH-4821" maxlength="12" />
+        <button id="btn-mp-join" class="mc-btn small">Войти</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВСТРОЕННАЯ СТУДИЯ МОДОВ (.VHMOD IDE) -->
   <div id="mods-modal" class="mc-screen hidden">
     <div class="mc-panel wide" style="max-width:780px">
       <div class="mc-panel-head">
         <span>Студия Модов (.vhmod IDE)</span>
         <button id="btn-close-mods" class="mc-btn tiny">✕</button>
       </div>
-
-      <!-- Панель проекта -->
       <div class="mc-row" style="margin-bottom:6px;flex-wrap:wrap">
         <select id="studio-proj-select" class="mc-input" style="flex:2;margin:0"></select>
         <button id="btn-studio-toggle" class="mc-btn tiny green">Мод: ВКЛ</button>
@@ -127,16 +126,12 @@
           <input id="inp-mod-file" type="file" accept=".vhmod,.js,.json" class="hidden" />
         </label>
       </div>
-
-      <!-- 4 Вкладки Студии -->
       <div class="mc-row" style="margin-bottom:8px">
         <button id="st-tab-code"  class="mc-btn small active">1. Код и Файлы</button>
         <button id="st-tab-px2d"  class="mc-btn small">2. 2D Пиксель-Арт</button>
         <button id="st-tab-vox3d" class="mc-btn small">3. 3D Моделлер</button>
         <button id="st-tab-anim"  class="mc-btn small">4. Анимации</button>
       </div>
-
-      <!-- ВКЛАДКА 1: КОД И ФАЙЛЫ -->
       <div id="st-pane-code">
         <div class="studio-code-layout">
           <div class="studio-sidebar">
@@ -146,7 +141,6 @@
           <div class="studio-main-col">
             <div style="font-size:11px;font-weight:800;margin-bottom:2px">Файл: <span id="studio-cur-file">scripts/main.js</span></div>
             <textarea id="studio-code-editor" class="mc-textarea" rows="7" spellcheck="false"></textarea>
-            <!-- Быстрая панель символов для телефона -->
             <div class="sym-bar">
               <button class="sym-key">{</button><button class="sym-key">}</button>
               <button class="sym-key">(</button><button class="sym-key">)</button>
@@ -162,8 +156,6 @@
         </div>
         <pre id="studio-console" class="mc-console" style="margin-top:6px"></pre>
       </div>
-
-      <!-- ВКЛАДКА 2: 2D ПИКСЕЛЬ-АРТ РЕДАКТОР -->
       <div id="st-pane-px2d" class="hidden">
         <div class="studio-2d-layout">
           <canvas id="px2d-canvas" width="224" height="224" style="border:2px solid #222;touch-action:none"></canvas>
@@ -194,15 +186,11 @@
           </div>
         </div>
       </div>
-
-      <!-- ОБЩИЙ 3D ВЬЮПОРТ ДЛЯ ВКЛАДОК 3 И 4 -->
       <div class="hidden">
         <div id="studio-3d-wrap">
           <canvas id="studio-3d-canvas" width="240" height="200" style="border:2px solid #222;touch-action:none"></canvas>
         </div>
       </div>
-
-      <!-- ВКЛАДКА 3: 3D ВОКСЕЛЬНЫЙ МОДЕЛЛЕР -->
       <div id="st-pane-vox3d" class="hidden">
         <div class="studio-2d-layout">
           <div id="vox3d-viewport-mount"></div>
@@ -231,8 +219,6 @@
           </div>
         </div>
       </div>
-
-      <!-- ВКЛАДКА 4: ТАЙМЛАЙН АНИМАЦИЙ -->
       <div id="st-pane-anim" class="hidden">
         <div class="studio-2d-layout">
           <div id="anim-viewport-mount"></div>
@@ -271,39 +257,70 @@
     </div>
   </div>
 
-  <!-- НАСТРОЙКИ -->
+  <!-- НАСТРОЙКИ И ХАБ МОДОВ (АКТИВАЦИЯ МОДОВ ПРЯМО ИЗ НАСТРОЕК!) -->
   <div id="settings-modal" class="mc-screen hidden">
-    <div class="mc-panel">
+    <div class="mc-panel wide" style="max-width:540px">
       <div class="mc-panel-head">
-        <span>Настройки</span>
+        <span>⚙ Настройки и Хаб Модов</span>
         <button id="btn-close-settings" class="mc-btn tiny">✕</button>
       </div>
-      <div class="mc-set-row">
-        <span>Дальность прорисовки: <b id="lbl-render-dist">3</b> чанка</span>
-        <input id="inp-render-dist" type="range" min="2" max="6" value="3" />
+      <div class="mc-row" style="margin-bottom:10px">
+        <button id="set-tab-general" class="mc-btn small active">🎮 Игра и Графика</button>
+        <button id="set-tab-modhub"  class="mc-btn small">✨ Хаб Модов</button>
       </div>
-      <div class="mc-set-row">
-        <span>Чувствительность: <b id="lbl-sens">1.0</b></span>
-        <input id="inp-sens" type="range" min="0.4" max="2.2" step="0.1" value="1.0" />
+
+      <!-- Вкладка 1: Игра и Графика -->
+      <div id="set-pane-general">
+        <div class="mc-set-row">
+          <span>Дальность прорисовки: <b id="lbl-render-dist">3</b> чанка</span>
+          <input id="inp-render-dist" type="range" min="2" max="6" value="3" />
+        </div>
+        <div class="mc-set-row">
+          <span>Чувствительность камеры: <b id="lbl-sens">1.0</b></span>
+          <input id="inp-sens" type="range" min="0.4" max="2.2" step="0.1" value="1.0" />
+        </div>
+        <div class="mc-set-row">
+          <span>Аниме-тема, Хаб и HD-текстуры</span>
+          <label class="vh-switch"><input id="inp-anime-ui" type="checkbox" checked /><span class="vh-slider"></span></label>
+        </div>
+        <div class="mc-set-row">
+          <span>Музыка и звуки</span>
+          <label class="vh-switch"><input id="inp-sound" type="checkbox" checked /><span class="vh-slider"></span></label>
+        </div>
       </div>
-      <div class="mc-set-row">
-        <span>Управление: <b id="lbl-ctrl">Крестовина (PE)</b></span>
-        <button id="btn-toggle-ctrl" class="mc-btn tiny">Сменить</button>
+
+      <!-- Вкладка 2: Хаб Модов (Вкл/Выкл, Импорт, Переход в Студию IDE) -->
+      <div id="set-pane-modhub" class="hidden">
+        <div class="mc-field-lbl" style="margin-bottom:6px">Активируйте или отключайте моды в 1 тап (применяется сразу):</div>
+        <div id="settings-modhub-list" class="mc-scroll-list" style="max-height:210px"></div>
+        <div class="mc-row" style="margin-top:8px">
+          <button id="btn-modhub-open-ide" class="mc-btn small">🛠 Открыть Студию Модов (IDE)</button>
+          <label class="mc-btn small green" style="text-align:center;cursor:pointer">
+            📥 Импорт .vhmod / .js
+            <input id="inp-modhub-file" type="file" accept=".vhmod,.js,.json" class="hidden" />
+          </label>
+        </div>
       </div>
-      <div class="mc-set-row">
-        <span>Звуки</span>
-        <input id="inp-sound" type="checkbox" checked />
-      </div>
+
       <button id="btn-save-settings" class="mc-btn green" style="margin-top:10px">Готово</button>
     </div>
   </div>
 
-  <!-- ИГРОВОЙ HUD -->
+  <!-- ИГРОВОЙ HUD (ДВУХПАЛЬЦЕВОЕ СЕНСОРНОЕ УПРАВЛЕНИЕ БЕЗ КРЕСТИКА) -->
   <div id="hud" class="hidden">
-    <div id="crosshair"></div>
-    <div id="mine-bar" class="hidden"><div id="mine-fill"></div></div>
+    <!-- Левая зона: плавающий стик движения -->
+    <div id="touch-move-zone">
+      <div id="floating-stick" class="hidden">
+        <div id="floating-stick-knob"></div>
+      </div>
+    </div>
+    <!-- Правая зона: свободный обзор, тап и удержание копания -->
+    <div id="touch-look-zone"></div>
 
-    <div id="top-bar">
+    <div id="crosshair"></div>
+    <div id="mine-ring" class="hidden"><div id="mine-fill"></div></div>
+
+    <div class="hud-top">
       <div id="coords-box">Позиция: 0, 30, 0 | Обычный мир</div>
       <div id="top-btns">
         <button id="btn-cam-view" class="mc-hud-btn" title="Камера">👁</button>
@@ -313,7 +330,16 @@
       </div>
     </div>
 
-    <!-- ПОЛОСА ЗДОРОВЬЯ БОССА (ПОВЕЛИТЕЛЬ ПРЕИСПОДНЕЙ) -->
+    <!-- Баннер автоподкачки модов -->
+    <div id="mp-mods-prompt" class="hidden" style="position:fixed;top:42px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(18,22,30,0.95);border:2px solid #ffff55;padding:8px 12px;pointer-events:auto;width:min(360px,90vw);text-align:center">
+      <div id="mp-mods-prompt-txt" style="font-size:12px;font-weight:800;color:#ffff55;margin-bottom:6px">Сервер прислал моды!</div>
+      <div class="mc-row">
+        <button id="btn-mp-accept-mods" class="mc-btn tiny green">Подкачать моды</button>
+        <button id="btn-mp-decline-mods" class="mc-btn tiny red">Пропустить</button>
+      </div>
+    </div>
+
+    <!-- Полоса здоровья Босса -->
     <div id="boss-bar" class="hidden">
       <div id="boss-name">Повелитель Преисподней</div>
       <div class="boss-track"><div id="boss-fill"></div></div>
@@ -338,59 +364,106 @@
       <button id="btn-inv-dots" class="mc-slot inv-dots">•••</button>
     </div>
 
-    <!-- Крестовина PE -->
-    <div id="dpad-zone">
-      <button id="dp-up"    class="dp-btn dp-up">▲</button>
-      <button id="dp-left"  class="dp-btn dp-left">◀</button>
-      <button id="dp-mid"   class="dp-btn dp-mid">●</button>
-      <button id="dp-right" class="dp-btn dp-right">▶</button>
-      <button id="dp-down"  class="dp-btn dp-down">▼</button>
-    </div>
-
-    <div id="joy-zone" class="hidden">
-      <div id="joy-base"><div id="joy-knob"></div></div>
-    </div>
-
+    <!-- Правые кнопки под большой палец (Прыжок, Присед, Выбросить, Полёт) -->
     <div id="right-touch">
-      <button id="btn-jump" class="dp-btn rt-jump">▲</button>
-      <button id="btn-sneak" class="dp-btn rt-sneak">▼</button>
-      <button id="btn-fly" class="dp-btn rt-fly hidden">✈</button>
+      <button id="btn-fly"   class="act-circle sm hidden" title="Полёт">✈</button>
+      <button id="btn-drop"  class="act-circle sm" title="Выбросить предмет (Q)">⬇</button>
+      <button id="btn-sneak" class="act-circle sm" title="Присед">▼</button>
+      <button id="btn-jump"  class="act-circle lg" title="Прыжок">▲</button>
     </div>
   </div>
 
-  <!-- ЧАТ -->
-  <div id="chat-modal" class="mc-screen hidden" style="background:rgba(0,0,0,0.45);align-items:flex-end">
-    <div class="mc-panel wide" style="margin-bottom:14px">
+  <!-- УДОБНЫЙ МОБИЛЬНЫЙ ЧАТ ВВЕРХУ ЭКРАНА С БЫСТРЫМИ КОМАНДАМИ -->
+  <div id="chat-modal" class="mc-screen hidden" style="background:rgba(0,0,0,0.45);justify-content:flex-start;padding-top:42px">
+    <div class="mc-panel wide">
+      <div class="cmd-chips-row">
+        <button class="cmd-chip" data-cmd="/tp_host">К Хосту</button>
+        <button class="cmd-chip" data-cmd="/spawn">/spawn</button>
+        <button class="cmd-chip" data-cmd="/time day">/time day</button>
+        <button class="cmd-chip" data-cmd="/portal">/portal</button>
+        <button class="cmd-chip" data-cmd="/nether">/nether</button>
+        <button class="cmd-chip" data-cmd="/overworld">/overworld</button>
+        <button class="cmd-chip" data-cmd="/boss">/boss</button>
+        <button class="cmd-chip" data-cmd="/give 104 16">Алмазы ×16</button>
+      </div>
       <div class="mc-row">
-        <input id="chat-input" class="mc-input" type="text" placeholder="Сообщение или команда (/nether, /overworld, /portal, /boss, /give)..." />
+        <input id="chat-input" class="mc-input" type="text" placeholder="Сообщение или команда..." autocomplete="off" style="margin:0" />
         <button id="btn-chat-send" class="mc-btn small green">Отправить</button>
         <button id="btn-chat-close" class="mc-btn tiny">✕</button>
       </div>
     </div>
   </div>
 
-  <!-- ИНВЕНТАРЬ, 4 СЛОТА БРОНИ, КРАФТ И ПЕЧЬ -->
-  <div id="inv-modal" class="mc-screen hidden">
+  <!-- ИНВЕНТАРЬ ИГРОКА (ТОЛЬКО БРОНЯ + 2x2 КАРМАННЫЙ КРАФТ + РЮКЗАК, БЕЗ ПЛАВКИ!) -->
+  <div id="inventory-modal" class="mc-screen hidden">
     <div class="mc-panel wide">
-      <div class="mc-panel-head">
-        <span id="inv-title">Инвентарь, Броня и Крафт</span>
+      <div class="modal-head-row">
+        <span>Инвентарь и Карманный Крафт (2×2)</span>
         <button id="btn-close-inv" class="mc-btn tiny">✕</button>
       </div>
-      <div id="armor-slots-bar" class="mc-row" style="margin-bottom:6px;background:#8b8b8b;padding:5px;border:2px solid #373737"></div>
-      <div class="mc-row" style="margin-bottom:8px">
-        <button id="tab-bag"   class="mc-btn small active">Инвентарь</button>
-        <button id="tab-craft" class="mc-btn small">Крафт</button>
-        <button id="tab-smelt" class="mc-btn small">Печь</button>
+      <div class="inv-top-split">
+        <div id="armor-slots-col" class="armor-col"></div>
+        <div class="inv-char-box">
+          <canvas id="inv-skin-canvas" width="84" height="118"></canvas>
+          <button id="btn-inv-drop" class="mc-btn tiny red" style="margin-top:4px">Выбросить</button>
+        </div>
+        <div class="pocket-craft-box">
+          <div class="mc-field-lbl">Крафт в руках (2×2):</div>
+          <div id="pocket-craft-list" class="mc-scroll-list" style="max-height:125px;margin-top:2px"></div>
+        </div>
       </div>
-      <div id="inv-content" class="mc-inv-grid"></div>
+      <div class="mc-field-lbl">Рюкзак (нажмите два слота, чтобы поменять местами):</div>
+      <div id="inv-bag-grid" class="mc-chest-grid" style="max-height:140px"></div>
+      <div class="mc-field-lbl" style="margin-top:5px">Панель быстрого доступа:</div>
+      <div id="inv-hotbar-grid" class="mc-chest-grid" style="max-height:54px"></div>
     </div>
   </div>
 
-  <!-- 27-СЛОТОВЫЙ СУНДУК -->
+  <!-- ВЕРСТАК (ПОЛНЫЙ 3x3 КРАФТ — ОТКРЫВАЕТСЯ ПО ТАПУ НА БЛОК ВЕРСТАКА!) -->
+  <div id="crafting-modal" class="mc-screen hidden">
+    <div class="mc-panel wide">
+      <div class="modal-head-row">
+        <span>🔨 Верстак — Полный крафт (3×3)</span>
+        <button id="btn-close-crafting" class="mc-btn tiny">✕</button>
+      </div>
+      <div id="table-craft-grid" class="mc-inv-grid"></div>
+    </div>
+  </div>
+
+  <!-- ПЕЧЬ (ОТДЕЛЬНЫЙ БЛОК С ТОПЛИВОМ И ПРОГРЕССОМ ПЛАВКИ!) -->
+  <div id="furnace-modal" class="mc-screen hidden">
+    <div class="mc-panel wide">
+      <div class="modal-head-row">
+        <span>🔥 Печь (Переплавка с топливом)</span>
+        <button id="btn-close-furnace" class="mc-btn tiny">✕</button>
+      </div>
+      <div class="furnace-station">
+        <div class="furnace-col">
+          <span class="mc-field-lbl">Сырьё</span>
+          <div id="furnace-in-slot" class="mc-slot big-slot"></div>
+          <div id="furnace-flame-lbl" style="font-size:12px;font-weight:900;color:#d9534f">🔥 0%</div>
+          <span class="mc-field-lbl">Топливо</span>
+          <div id="furnace-fuel-slot" class="mc-slot big-slot"></div>
+        </div>
+        <div class="furnace-mid">
+          <div class="furnace-prog-track"><div id="furnace-prog-fill"></div></div>
+          <div style="font-size:18px;font-weight:900;margin-top:4px">➡</div>
+        </div>
+        <div class="furnace-col">
+          <span class="mc-field-lbl">Готово</span>
+          <div id="furnace-out-slot" class="mc-slot big-slot"></div>
+        </div>
+      </div>
+      <div class="mc-field-lbl">Нажмите предмет в рюкзаке, чтобы загрузить в Печь:</div>
+      <div id="furnace-player-grid" class="mc-chest-grid"></div>
+    </div>
+  </div>
+
+  <!-- 27-СЛОТОВЫЙ СУНДУК (ОБЩИЙ В МУЛЬТИПЛЕЕРЕ) -->
   <div id="chest-modal" class="mc-screen hidden">
     <div class="mc-panel wide">
-      <div class="mc-panel-head">
-        <span>Сундук (27 слотов)</span>
+      <div class="modal-head-row">
+        <span>📦 Сундук (27 слотов — общий в сети)</span>
         <button id="btn-close-chest" class="mc-btn tiny">✕</button>
       </div>
       <div class="mc-field-lbl">Внутри сундука (нажмите, чтобы забрать):</div>

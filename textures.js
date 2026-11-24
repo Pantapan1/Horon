@@ -79,15 +79,15 @@ const ITEMS_DB = {
 
 const ATLAS_COLS = 8;
 const ATLAS_ROWS = 12;
-const TILE_PX = 16;
+const TILE_PX = 64; // HD 64x64 на блок для чётких аниме-текстур!
 
 const SKINS_DB = [
-  { id: "explorer", name: "Искатель",  skin: "#e2b28b", hair: "#4a321d", shirt: "#2898b8", pants: "#38467a", eye: "#2448a8" },
-  { id: "ranger",   name: "Рейнджер",  skin: "#ebbfa0", hair: "#b86428", shirt: "#3d8c40", pants: "#4d3e30", eye: "#2d8a42" },
-  { id: "knight",   name: "Рыцарь",    skin: "#d8a884", hair: "#5a6270", shirt: "#8c96a6", pants: "#4a5260", eye: "#38c8ff" },
-  { id: "shadow",   name: "Тень",      skin: "#d2a892", hair: "#1e1a28", shirt: "#2c223c", pants: "#1c1826", eye: "#d24cff" },
-  { id: "crimson",  name: "Огненный",  skin: "#e0ad86", hair: "#321814", shirt: "#b82c2c", pants: "#3a2224", eye: "#ffaa22" },
-  { id: "cyber",    name: "Кибер",     skin: "#d8c0b0", hair: "#1e2a38", shirt: "#243448", pants: "#1c2430", eye: "#2eff98" }
+  { id: "fox_officer",   name: "Офицер Кицунэ",   skin: "#f3c6a5", hair: "#c2410c", eye: "#f59e0b", shirt: "#1e293b", trim: "#fbbf24", pants: "#0f172a", addon: "fox" },
+  { id: "estelle_cmd",   name: "Командир Эстель", skin: "#fde2d2", hair: "#2dd4bf", eye: "#e11d48", shirt: "#18181b", trim: "#eab308", pants: "#27272a", addon: "estelle" },
+  { id: "luna_cat",      name: "Лунная Кошка",    skin: "#f8e3d6", hair: "#e2e8f0", eye: "#86efac", shirt: "#1c1917", trim: "#dc2626", pants: "#09090b", addon: "luna" },
+  { id: "shadow_knight", name: "Теневой Рыцарь",  skin: "#94a3b8", hair: "#0f172a", eye: "#38bdf8", shirt: "#1e1b4b", trim: "#38bdf8", pants: "#0f172a", addon: "knight" },
+  { id: "emerald_scout", name: "Следопыт",        skin: "#e0ac69", hair: "#451a03", eye: "#22c55e", shirt: "#14532d", trim: "#a3e635", pants: "#3f2e21", addon: "none" },
+  { id: "explorer",      name: "Классика HD",     skin: "#e2b28b", hair: "#4a321d", eye: "#2448a8", shirt: "#2898b8", trim: "#1e6f88", pants: "#38467a", addon: "none" }
 ];
 
 function drawSkinPreview(canvas, skinObj) {
@@ -97,7 +97,6 @@ function drawSkinPreview(canvas, skinObj) {
   const u = Math.floor(w / 16);
   const ox = Math.floor((w - u * 16) / 2);
   const oy = Math.floor((h - u * 24) / 2);
-
   if (skinObj && skinObj.customImg) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(skinObj.customImg, 0, 0, w, h);
@@ -109,12 +108,10 @@ function drawSkinPreview(canvas, skinObj) {
   rect(4, 0, 8, 2, s.hair); rect(4, 2, 1, 2, s.hair); rect(11, 2, 1, 2, s.hair);
   rect(5, 4, 1, 1, "#ffffff"); rect(6, 4, 1, 1, s.eye);
   rect(10, 4, 1, 1, "#ffffff"); rect(9, 4, 1, 1, s.eye);
-  rect(7, 6, 2, 1, "#9c6248");
   rect(4, 8, 8, 8, s.shirt);
   rect(1, 8, 3, 8, s.shirt); rect(1, 13, 3, 3, s.skin);
   rect(12, 8, 3, 8, s.shirt); rect(12, 13, 3, 3, s.skin);
   rect(4, 16, 4, 8, s.pants); rect(8, 16, 4, 8, s.pants);
-  rect(4, 22, 4, 2, "#2a2a2e"); rect(8, 22, 4, 2, "#2a2a2e");
 }
 
 function buildTextureAtlas() {
@@ -122,11 +119,20 @@ function buildTextureAtlas() {
   canvas.width = ATLAS_COLS * TILE_PX;
   canvas.height = ATLAS_ROWS * TILE_PX;
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
 
-  function drawTile(idx, fn) {
+  const tmp16 = document.createElement("canvas");
+  tmp16.width = 16; tmp16.height = 16;
+  const tctx = tmp16.getContext("2d");
+
+  let animePackActive = true;
+  let animeWaterCanvas = null;
+  let animeLavaCanvas = null;
+
+  function drawTile16(idx, fn) {
     const tx = (idx % ATLAS_COLS) * TILE_PX;
     const ty = Math.floor(idx / ATLAS_COLS) * TILE_PX;
-    const img = ctx.createImageData(TILE_PX, TILE_PX);
+    const img = tctx.createImageData(16, 16);
     const d = img.data;
     const setPx = (x, y, r, g, b, a = 255) => {
       if (x < 0 || x >= 16 || y < 0 || y >= 16) return;
@@ -141,96 +147,146 @@ function buildTextureAtlas() {
       return ((n ^ (n >>> 16)) >>> 0) % 256;
     };
     fn(setPx, h);
-    ctx.putImageData(img, tx, ty);
+    tctx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(tx, ty, TILE_PX, TILE_PX);
+    ctx.drawImage(tmp16, 0, 0, 16, 16, tx, ty, TILE_PX, TILE_PX);
   }
 
-  // 0..43 базовые тайлы
-  drawTile(0, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,1)%28)-14; p(x,y, 92+k, 168+k, 58+k); } });
-  drawTile(1, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,2)%24)-12; const edge=3+(h(x,0,9)%3); if (y<edge) p(x,y, 88+k, 162+k, 54+k); else if (y===edge) p(x,y, 64+k, 118+k, 38+k); else { const peb=h(x,y,5)>235; p(x,y, peb?136:134+k, peb?132:94+k, peb?126:62+k); } } });
-  drawTile(2, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,3)%26)-13; const peb=h(x,y,4)>238; p(x,y, peb?142:134+k, peb?138:94+k, peb?132:62+k); } });
-  drawTile(3, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const band=Math.floor(h(x>>1,y,7)/16)-8; const k=(h(x,y,8)%16)-8; const v=128+band+k; p(x,y, v, v, v+2); } });
-  drawTile(4, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const gx=(x+(y>>2)*3)%5, gy=y%4; const seam=(gx===0||gy===0); const hi=(gx===1&&gy===1); const v=seam?68:(hi?156:116+((h(x,y,10)%20)-10)); p(x,y,v,v,v+2); } });
-  drawTile(5, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const d=Math.hypot(x-7.5,y-7.5); if (d>6.7) p(x,y,92,66,40); else { const r=(Math.floor(d)%2===0)?16:-6; p(x,y, 174+r, 138+r, 88+r); } } });
-  drawTile(6, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const groove=(x%4===0)?-20:((x%4===2)?10:0); const k=(h(x,y,11)%16)-8; p(x,y, 102+groove+k, 76+groove+k, 46+groove+k); } });
-  drawTile(7, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,12); if (r<38) p(x,y,24,62,22,0); else { const k=(r%32)-16; p(x,y, 58+k, 138+k, 46+k, 255); } } });
-  drawTile(8, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const seam=(y%4===0)||((y<4&&x===11)||(y>=4&&y<8&&x===4)||(y>=8&&y<12&&x===13)||(y>=12&&x===6)); const hi=(y%4===1); const k=(h(x,y,13)%14)-7; if (seam) p(x,y,108,82,46); else p(x,y, (hi?188:170)+k, (hi?152:134)+k, (hi?98:84)+k); } });
-  drawTile(9, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,14)%16)-8; p(x,y, 224+k, 212+k, 158+k); } });
-  drawTile(10, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 38, 118, 224, 195); });
-  drawTile(11, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=30+(h(x,y,15)%65); p(x,y, v, v, v); } });
+  function paintProceduralBase() {
+    drawTile16(0, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,1)%28)-14; p(x,y, 92+k, 168+k, 58+k); } });
+    drawTile16(1, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,2)%24)-12; const edge=3+(h(x,0,9)%3); if (y<edge) p(x,y, 88+k, 162+k, 54+k); else if (y===edge) p(x,y, 64+k, 118+k, 38+k); else { const peb=h(x,y,5)>235; p(x,y, peb?136:134+k, peb?132:94+k, peb?126:62+k); } } });
+    drawTile16(2, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,3)%26)-13; const peb=h(x,y,4)>238; p(x,y, peb?142:134+k, peb?138:94+k, peb?132:62+k); } });
+    drawTile16(3, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const band=Math.floor(h(x>>1,y,7)/16)-8; const k=(h(x,y,8)%16)-8; const v=128+band+k; p(x,y, v, v, v+4); } });
+    drawTile16(4, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const gx=(x+(y>>2)*3)%5, gy=y%4; const seam=(gx===0||gy===0); const hi=(gx===1&&gy===1); const v=seam?68:(hi?156:116+((h(x,y,10)%20)-10)); p(x,y,v,v,v+4); } });
+    drawTile16(5, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const d=Math.hypot(x-7.5,y-7.5); if (d>6.7) p(x,y,92,66,40); else { const r=(Math.floor(d)%2===0)?16:-6; p(x,y, 174+r, 138+r, 88+r); } } });
+    drawTile16(6, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const groove=(x%4===0)?-20:((x%4===2)?10:0); const k=(h(x,y,11)%16)-8; p(x,y, 102+groove+k, 76+groove+k, 46+groove+k); } });
+    drawTile16(7, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,12); if (r<34) p(x,y,24,62,22,0); else { const k=(r%32)-16; p(x,y, 58+k, 148+k, 52+k, 255); } } });
+    drawTile16(8, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const seam=(y%4===0)||((y<4&&x===11)||(y>=4&&y<8&&x===4)||(y>=8&&y<12&&x===13)||(y>=12&&x===6)); const hi=(y%4===1); const k=(h(x,y,13)%14)-7; if (seam) p(x,y,108,82,46); else p(x,y, (hi?188:170)+k, (hi?152:134)+k, (hi?98:84)+k); } });
+    drawTile16(9, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,14)%16)-8; p(x,y, 236+k, 218+k, 152+k); } });
+    drawTile16(10, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 38, 128, 232, 200); });
+    drawTile16(11, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=28+(h(x,y,15)%58); p(x,y, v, v, v+6); } });
 
-  const ores = [[[28,28,32],[54,54,60]], [[216,178,148],[242,216,192]], [[248,202,42],[255,244,140]], [[64,232,248],[180,252,255]]];
-  const spots = [[3,3],[4,3],[3,4],[11,4],[12,4],[11,5],[6,9],[7,9],[7,10],[12,11],[13,11],[2,12],[3,12]];
-  ores.forEach(([c1, c2], idx) => {
-    drawTile(12 + idx, (p, h) => {
-      for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=124+((h(x,y,20+idx)%18)-9); p(x,y,v,v,v+2); }
-      spots.forEach(([sx, sy], si) => { const c = si%3===0 ? c2 : c1; p(sx, sy, c[0], c[1], c[2]); });
+    const ores = [[[28,28,34],[62,62,72]], [[224,184,152],[252,226,198]], [[255,204,42],[255,246,154]], [[58,238,255],[194,254,255]]];
+    const spots = [[3,3],[4,3],[3,4],[11,4],[12,4],[11,5],[6,9],[7,9],[7,10],[12,11],[13,11],[2,12],[3,12]];
+    ores.forEach(([c1, c2], idx) => {
+      drawTile16(12 + idx, (p, h) => {
+        for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=122+((h(x,y,20+idx)%18)-9); p(x,y,v,v,v+4); }
+        spots.forEach(([sx, sy], si) => { const c = si%3===0 ? c2 : c1; p(sx, sy, c[0], c[1], c[2]); });
+      });
     });
-  });
 
-  drawTile(16, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const gl=(x===3&&y===3)||(x===4&&y===2)||(x===12&&y===12); p(x,y, b?192:225, b?235:248, 255, b?220:(gl?200:35)); } });
-  drawTile(17, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const m=(y%4===0)||((x+(y>>2)*4)%8===0); const k=(h(x,y,25)%16)-8; if (m) p(x,y,192,188,180); else p(x,y,154+k,72+k,56+k); } });
-  drawTile(18, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const g=(x===5||x===10||y===5||y===10); p(x,y, b?88:(g?66:174), b?58:(g?42:128), b?34:(g?24:76)); } });
-  drawTile(19, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===4); p(x,y, b?88:162, b?58:122, b?34:72); if (x>=3&&x<=5&&y>=7&&y<=13) p(x,y,192,198,208); if (x>=9&&x<=12&&y>=8&&y<=11) p(x,y,192,198,208); } });
-  drawTile(20, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const v=b?74:118+((h(x,y,26)%14)-7); p(x,y,v,v,v); } });
-  drawTile(21, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (x>=4&&x<=11&&y>=9&&y<=13) p(x,y, 248, 128+((x*19+y*23)%80), 28); else if (x>=3&&x<=12&&y>=3&&y<=6) p(x,y, 32,32,36); else { const v=116+((h(x,y,27)%16)-8); p(x,y,v,v,v); } } });
-  drawTile(22, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=238+(h(x,y,28)%12); p(x,y,v,v,255); } });
-  drawTile(23, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,29)%20)-10; if (y<4+(h(x,1,29)%3)) p(x,y,242,248,255); else p(x,y,134+k,94+k,62+k); } });
-  drawTile(24, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,30)%18)-9; p(x,y, 138+k, 198+k, 250, 210); } });
-  drawTile(25, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 46, 124, 48); });
-  drawTile(26, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const rib=(x%4===0); p(x,y, rib?32:54, rib?96:142, rib?34:54); } });
-  drawTile(27, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,31); p(x,y, r>220?82:24+(r%18), r>220?48:16+(r%12), r>220?128:42+(r%24)); } });
-  drawTile(28, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,32); if (r>180) p(x,y,255,244,174); else if (r>90) p(x,y,232,188,88); else p(x,y,154,108,46); } });
-  drawTile(29, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y<2||y>13||y===7||y===8) p(x,y,168,130,82); else { const bc=[[178,42,48],[46,114,192],[58,158,76],[218,174,48]][(x>>1)%4]; p(x,y,bc[0],bc[1],bc[2]); } } });
-  drawTile(30, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=112+(h(x,y,33)%42); p(x,y,v,v-2,v-4); } });
-  drawTile(31, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 186, 48, 42); });
-  drawTile(32, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y>=5&&y<=10) p(x,y, 238, 234, 224); else p(x,y, (x%2===0?204:184), 46, 42); } });
-  drawTile(33, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const dash=(y%4===1&&x>=2&&x<=6)||(y%5===3&&x>=9&&x<=13); const v=224+((h(x,y,34)%18)-9); p(x,y, dash?46:v, dash?44:v, dash?42:v-4); } });
-  drawTile(34, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const band=(y<3)?14:((y===3)?-16:0); const k=(h(x,y,35)%14)-7; p(x,y, 224+band+k, 210+band+k, 162+band+k); } });
-  drawTile(35, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 238, 92, 20); });
-  drawTile(36, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,36)%34)-17; p(x,y, 118+k, 46+(k>>1), 46+(k>>1)); } });
-  drawTile(37, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,37)%24)-12; p(x,y, 82+k, 64+k, 52+k); } });
-  drawTile(38, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const m=(y%4===0)||((x+(y>>2)*4)%8===0); const k=(h(x,y,38)%14)-7; if (m) p(x,y,28,16,20); else p(x,y, 58+k, 28+k, 34+k); } });
-  drawTile(39, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,39)%28)-14; p(x,y,118+k,46+(k>>1),46+(k>>1)); } spots.forEach(([sx,sy])=>p(sx,sy,242,238,230)); });
-  drawTile(40, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 148, 36, 232, 195); });
-  drawTile(41, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); p(x,y, b?52:168, b?34:118, b?16:44); } });
-  drawTile(42, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===5); const lk=(x>=7&&x<=8&&y>=4&&y<=7); p(x,y, lk?210:(b?52:168), lk?214:(b?34:118), lk?220:(b?16:44)); } });
-  drawTile(43, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=124+((h(x,y,43)%18)-9); p(x,y,v,v,v+2); } spots.forEach(([sx,sy],si)=>p(sx,sy,si%2?120:42,238,si%2?152:92)); });
+    drawTile16(16, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const gl=(x===3&&y===3)||(x===4&&y===2)||(x===12&&y===12); p(x,y, b?192:225, b?235:248, 255, b?220:(gl?200:35)); } });
+    drawTile16(17, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const m=(y%4===0)||((x+(y>>2)*4)%8===0); const k=(h(x,y,25)%16)-8; if (m) p(x,y,192,188,180); else p(x,y,164+k,72+k,56+k); } });
+    drawTile16(18, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const g=(x===5||x===10||y===5||y===10); p(x,y, b?88:(g?66:174), b?58:(g?42:128), b?34:(g?24:76)); } });
+    drawTile16(19, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===4); p(x,y, b?88:162, b?58:122, b?34:72); if (x>=3&&x<=5&&y>=7&&y<=13) p(x,y,192,198,208); if (x>=9&&x<=12&&y>=8&&y<=11) p(x,y,192,198,208); } });
+    drawTile16(20, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const v=b?74:118+((h(x,y,26)%14)-7); p(x,y,v,v,v+4); } });
+    drawTile16(21, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (x>=4&&x<=11&&y>=9&&y<=13) p(x,y, 248, 128+((x*19+y*23)%80), 28); else if (x>=3&&x<=12&&y>=3&&y<=6) p(x,y, 32,32,36); else { const v=116+((h(x,y,27)%16)-8); p(x,y,v,v,v+4); } } });
+    drawTile16(22, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=238+(h(x,y,28)%12); p(x,y,v,v,255); } });
+    drawTile16(23, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,29)%20)-10; if (y<4+(h(x,1,29)%3)) p(x,y,242,248,255); else p(x,y,134+k,94+k,62+k); } });
+    drawTile16(24, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,30)%18)-9; p(x,y, 138+k, 206+k, 255, 210); } });
+    drawTile16(25, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 46, 134, 52); });
+    drawTile16(26, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const rib=(x%4===0); p(x,y, rib?32:54, rib?102:152, rib?34:58); } });
+    drawTile16(27, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,31); p(x,y, r>220?98:24+(r%18), r>220?52:16+(r%12), r>220?158:48+(r%24)); } });
+    drawTile16(28, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,32); if (r>180) p(x,y,255,244,174); else if (r>90) p(x,y,242,194,82); else p(x,y,164,114,46); } });
+    drawTile16(29, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y<2||y>13||y===7||y===8) p(x,y,176,130,78); else { const bc=[[210,48,64],[52,134,224],[62,188,92],[238,186,48]][(x>>1)%4]; p(x,y,bc[0],bc[1],bc[2]); } } });
+    drawTile16(30, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=116+(h(x,y,33)%42); p(x,y,v,v-2,v-4); } });
+    drawTile16(31, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 204, 48, 46); });
+    drawTile16(32, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y>=5&&y<=10) p(x,y, 244, 240, 232); else p(x,y, (x%2===0?218:194), 46, 46); } });
+    drawTile16(33, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const dash=(y%4===1&&x>=2&&x<=6)||(y%5===3&&x>=9&&x<=13); const v=232+((h(x,y,34)%18)-9); p(x,y, dash?46:v, dash?44:v, dash?48:v-4); } });
+    drawTile16(34, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const band=(y<3)?14:((y===3)?-16:0); const k=(h(x,y,35)%14)-7; p(x,y, 232+band+k, 214+band+k, 158+band+k); } });
+    drawTile16(35, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 248, 98, 22); });
+    drawTile16(36, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,36)%34)-17; p(x,y, 128+k, 42+(k>>1), 46+(k>>1)); } });
+    drawTile16(37, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,37)%24)-12; p(x,y, 86+k, 64+k, 54+k); } });
+    drawTile16(38, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const m=(y%4===0)||((x+(y>>2)*4)%8===0); const k=(h(x,y,38)%14)-7; if (m) p(x,y,28,16,22); else p(x,y, 64+k, 28+k, 38+k); } });
+    drawTile16(39, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,39)%28)-14; p(x,y,126+k,42+(k>>1),46+(k>>1)); } spots.forEach(([sx,sy])=>p(sx,sy,246,242,235)); });
+    drawTile16(40, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 158, 42, 242, 200); });
+    drawTile16(41, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); p(x,y, b?58:186, b?36:128, b?18:48); } });
+    drawTile16(42, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===5); const lk=(x>=7&&x<=8&&y>=4&&y<=7); p(x,y, lk?235:(b?58:186), lk?215:(b?36:128), lk?120:(b?18:48)); } });
+    drawTile16(43, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=124+((h(x,y,43)%18)-9); p(x,y,v,v,v+4); } spots.forEach(([sx,sy],si)=>p(sx,sy,si%2?135:42,248,si%2?168:98)); });
+    drawTile16(44, (p) => {
+      for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y,0,0,0,0);
+      for (let y=6;y<16;y++) { p(7,y,154,102,52,255); p(8,y,126,80,38,255); }
+      for (let y=3;y<=5;y++) { p(7,y,255,212,52,255); p(8,y,255,134,28,255); }
+      p(7,2,255,250,180,255);
+    });
+    drawTile16(45, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y<4) p(x,y,246,246,255); else p(x,y,(x===0||x===15||y===15)?160:220,42,58); } });
+    drawTile16(46, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y<8) p(x,y,220,42,58); else if (y<12) p(x,y,168,122,74); else if (x<3||x>12) p(x,y,128,88,48); else p(x,y,0,0,0,0); } });
+    drawTile16(47, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y,0,0,0,0); for (const sx of [2,5,8,11,14]) for (let y=3;y<16;y++) p(sx,y,y<7?255:214,y<7?218:172,56,255); });
+  }
 
-  // 44: Torch (прозрачный фон + палка + горящий уголёк!)
-  drawTile(44, (p) => {
-    for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y,0,0,0,0);
-    for (let y=6;y<16;y++) { p(7,y,142,98,52,255); p(8,y,118,78,38,255); }
-    for (let y=3;y<=5;y++) { p(7,y,255,198,42,255); p(8,y,255,134,24,255); }
-    p(7,2,255,244,160,255);
-  });
-  // 45: Bed Top (белая подушка + красное одеяло)
-  drawTile(45, (p) => {
-    for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
-      if (y < 4) p(x,y, 240, 242, 248);
-      else p(x,y, (x===0||x===15||y===15)?148:198, 38, 42);
-    }
-  });
-  // 46: Bed Side
-  drawTile(46, (p) => {
-    for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
-      if (y < 8) p(x,y, 198, 42, 46);
-      else if (y < 12) p(x,y, 158, 118, 72);
-      else if (x < 3 || x > 12) p(x,y, 128, 92, 54);
-      else p(x,y,0,0,0,0);
-    }
-  });
-  // 47: Wheat Crop
-  drawTile(47, (p) => {
-    for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y,0,0,0,0);
-    for (const sx of [2, 5, 8, 11, 14]) {
-      for (let y=3;y<16;y++) p(sx, y, y<7?242:198, y<7?204:162, 48, 255);
-    }
-  });
+  paintProceduralBase();
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.flipY = false;
+
+  // Загрузка HD Аниме-Атласа (anime_tiles.png — 4x4 от Nano Banana) прямо в 64x64 ячейки!
+  function applyAnimeTexturePack(enable) {
+    animePackActive = Boolean(enable);
+    if (!enable) {
+      animeWaterCanvas = null;
+      animeLavaCanvas = null;
+      paintProceduralBase();
+      tex.needsUpdate = true;
+      if (VH.Engine?.renderHotbar) VH.Engine.renderHotbar();
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      const sw = img.width / 4, sh = img.height / 4;
+      const blit = (cx, cy, tileIdx) => {
+        const dx = (tileIdx % ATLAS_COLS) * TILE_PX;
+        const dy = Math.floor(tileIdx / ATLAS_COLS) * TILE_PX;
+        ctx.imageSmoothingEnabled = true;
+        ctx.clearRect(dx, dy, TILE_PX, TILE_PX);
+        ctx.drawImage(img, cx * sw, cy * sh, sw, sh, dx, dy, TILE_PX, TILE_PX);
+      };
+
+      // Основные 16 тайлов напрямую из Nano Banana 4x4 атласа!
+      const map16 = [
+        [0,0, 0],  [1,0, 1],  [2,0, 2],  [3,0, 4],   // Дёрн верх, Дёрн бок, Земля, Булыжник
+        [0,1, 8],  [1,1, 6],  [2,1, 15], [3,1, 27],  // Доски, Кора дуба, Алмазная руда, Обсидиан
+        [0,2, 17], [1,2, 36], [2,2, 28], [3,2, 10],  // Кирпичи, Адский камень, Светокамень, Вода
+        [0,3, 35], [1,3, 18], [2,3, 42], [3,3, 21]   // Лава, Верстак, Сундук, Печь
+      ];
+      for (const [cx, cy, tid] of map16) blit(cx, cy, tid);
+
+      // Производные HD аниме-тайлы для гармоничного вида всех остальных блоков!
+      blit(0, 0, 7);  // Листва (пышная зелёная основа + лёгкий аниме-блик)
+      blit(0, 1, 19); // Бок верстака на основе аниме-досок
+      blit(0, 1, 41); // Крышка сундука на основе аниме-досок
+      blit(3, 0, 20); // Верх печи на основе аниме-камня
+      blit(1, 2, 39); // Кварцевая руда на основе аниме-адского камня
+      // Добавляем яркие кристаллы кварца поверх 39 тайла
+      const qx = (39 % ATLAS_COLS) * TILE_PX, qy = Math.floor(39 / ATLAS_COLS) * TILE_PX;
+      ctx.fillStyle = "#fff8ee";
+      [[10,12,12,8],[38,16,14,10],[18,40,16,10],[44,44,10,8]].forEach(([x,y,w,h]) => ctx.fillRect(qx+x, qy+y, w, h));
+
+      // Снежная сторона (23): аниме-земля + белый снежный верх
+      blit(2, 0, 23);
+      const sx = (23 % ATLAS_COLS) * TILE_PX, sy = Math.floor(23 / ATLAS_COLS) * TILE_PX;
+      ctx.fillStyle = "#f2f8ff";
+      ctx.fillRect(sx, sy, TILE_PX, 18);
+      ctx.fillStyle = "#cfe4ff";
+      ctx.fillRect(sx, sy + 16, TILE_PX, 4);
+
+      // Кэшируем Воду и Лаву из аниме-атласа для плавной прокрутки течения
+      animeWaterCanvas = document.createElement("canvas");
+      animeWaterCanvas.width = TILE_PX; animeWaterCanvas.height = TILE_PX;
+      animeWaterCanvas.getContext("2d").drawImage(img, 3 * sw, 2 * sh, sw, sh, 0, 0, TILE_PX, TILE_PX);
+
+      animeLavaCanvas = document.createElement("canvas");
+      animeLavaCanvas.width = TILE_PX; animeLavaCanvas.height = TILE_PX;
+      animeLavaCanvas.getContext("2d").drawImage(img, 0 * sw, 3 * sh, sw, sh, 0, 0, TILE_PX, TILE_PX);
+
+      tex.needsUpdate = true;
+      if (VH.Engine?.renderHotbar) VH.Engine.renderHotbar();
+    };
+    img.src = "anime_tiles.png";
+  }
 
   let lastAnimStep = -1;
   function updateAnimatedTextures(timeSec) {
@@ -238,25 +294,40 @@ function buildTextureAtlas() {
     if (step === lastAnimStep) return;
     lastAnimStep = step;
 
-    drawTile(10, (p) => {
-      for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
-        const w = Math.sin((x * 0.55) + (y * 0.35) + step * 0.55) * 18 + Math.cos((y * 0.65) - step * 0.4) * 12;
-        const crest = w > 20 ? 35 : 0;
-        p(x, y, 32 + crest, 114 + w + crest, 224 + (w * 0.5), 192);
-      }
-    });
-    drawTile(35, (p) => {
-      for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
-        const w = Math.sin(x * 0.6 + step * 0.35) * Math.cos(y * 0.6 - step * 0.25);
-        const hot = w > 0.35;
-        p(x, y, hot ? 255 : 216, hot ? 188 : 74 + Math.floor((w + 1) * 35), hot ? 48 : 16, 255);
-      }
-    });
-    drawTile(40, (p) => {
+    if (animePackActive && animeWaterCanvas && animeLavaCanvas) {
+      // Плавное анимированное течение поверх аниме-воды (10) и аниме-лавы (35)!
+      const offW = (step * 3) % TILE_PX;
+      const wx = (10 % ATLAS_COLS) * TILE_PX, wy = Math.floor(10 / ATLAS_COLS) * TILE_PX;
+      ctx.drawImage(animeWaterCanvas, 0, 0, TILE_PX, TILE_PX - offW, wx, wy + offW, TILE_PX, TILE_PX - offW);
+      if (offW > 0) ctx.drawImage(animeWaterCanvas, 0, TILE_PX - offW, TILE_PX, offW, wx, wy, TILE_PX, offW);
+
+      const offL = (step * 2) % TILE_PX;
+      const lx = (35 % ATLAS_COLS) * TILE_PX, ly = Math.floor(35 / ATLAS_COLS) * TILE_PX;
+      ctx.drawImage(animeLavaCanvas, 0, 0, TILE_PX, TILE_PX - offL, lx, ly + offL, TILE_PX, TILE_PX - offL);
+      if (offL > 0) ctx.drawImage(animeLavaCanvas, 0, TILE_PX - offL, TILE_PX, offL, lx, ly, TILE_PX, offL);
+    } else {
+      drawTile16(10, (p) => {
+        for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+          const w = Math.sin((x*0.55)+(y*0.35)+step*0.55)*18 + Math.cos((y*0.65)-step*0.4)*12;
+          const crest = w > 20 ? 35 : 0;
+          p(x, y, 32+crest, 114+w+crest, 224+(w*0.5), 192);
+        }
+      });
+      drawTile16(35, (p) => {
+        for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+          const w = Math.sin(x*0.6+step*0.35)*Math.cos(y*0.6-step*0.25);
+          const hot = w > 0.35;
+          p(x, y, hot?255:216, hot?188:74+Math.floor((w+1)*35), hot?48:16, 255);
+        }
+      });
+    }
+
+    // Вихрь Портала в Ад (тайл 40)
+    drawTile16(40, (p) => {
       for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
         const d = Math.hypot(x - 7.5, y - 7.5);
         const swirl = Math.sin(d * 0.9 - step * 0.6 + Math.atan2(y - 7.5, x - 7.5) * 2);
-        p(x, y, 138 + swirl * 65, 28 + Math.max(0, swirl) * 55, 224 + swirl * 30, 200);
+        p(x, y, 148 + swirl * 65, 32 + Math.max(0, swirl) * 60, 232 + swirl * 22, 205);
       }
     });
     tex.needsUpdate = true;
@@ -267,10 +338,9 @@ function buildTextureAtlas() {
     const idx = forcedIdx !== null ? forcedIdx : nextModTile++;
     if (idx >= ATLAS_COLS * ATLAS_ROWS) return 3;
     if (typeof drawOrColor === "function") {
-      drawTile(idx, drawOrColor);
+      drawTile16(idx, drawOrColor);
     } else if (Array.isArray(drawOrColor)) {
-      // Массив 256 RGBA-цветов из 2D Пиксель-редактора Студии!
-      drawTile(idx, (p) => {
+      drawTile16(idx, (p) => {
         for (let i = 0; i < Math.min(256, drawOrColor.length); i++) {
           const c = drawOrColor[i];
           if (c) p(i % 16, Math.floor(i / 16), c[0], c[1], c[2], c[3] ?? 255);
@@ -281,11 +351,11 @@ function buildTextureAtlas() {
       const rr = parseInt(hex.slice(0, 2), 16) || 80;
       const gg = parseInt(hex.slice(2, 4), 16) || 200;
       const bb = parseInt(hex.slice(4, 6), 16) || 120;
-      drawTile(idx, (p, h) => {
-        for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-          const b = (x === 0 || x === 15 || y === 0 || y === 15);
+      drawTile16(idx, (p, h) => {
+        for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+          const b = (x===0||x===15||y===0||y===15);
           const k = (h(x, y, idx + 7) % 24) - 12;
-          p(x, y, (b ? rr - 28 : rr) + k, (b ? gg - 28 : gg) + k, (b ? bb - 28 : bb) + k);
+          p(x, y, (b?rr-28:rr)+k, (b?gg-28:gg)+k, (b?bb-28:bb)+k);
         }
       });
     }
@@ -294,73 +364,130 @@ function buildTextureAtlas() {
   }
 
   VH.registerAtlasTile = registerAtlasTile;
-  return { canvas, texture: tex, updateAnimatedTextures, registerAtlasTile };
+  VH.applyAnimeTexturePack = applyAnimeTexturePack;
+  applyAnimeTexturePack(true);
+  return { canvas, texture: tex, updateAnimatedTextures, registerAtlasTile, applyAnimeTexturePack };
 }
 
+// 32x32 АНИМЕ-ИКОНКИ ПРЕДМЕТОВ И БЛОКОВ (С ЧЁТКИМ КОНТУРОМ И БЛИКАМИ!)
 function drawItemIcon(canvas, id) {
   const ctx = canvas.getContext("2d");
-  canvas.width = 16; canvas.height = 16;
-  ctx.clearRect(0, 0, 16, 16);
+  canvas.width = 32; canvas.height = 32;
+  ctx.clearRect(0, 0, 32, 32);
   const info = ITEMS_DB[id];
   if (!info || !VH.atlasCanvas) return;
+
   if (typeof info.drawIcon === "function") { try { info.drawIcon(ctx); return; } catch {} }
   if (Array.isArray(info.pixelIcon)) {
     for (let i = 0; i < Math.min(256, info.pixelIcon.length); i++) {
       const c = info.pixelIcon[i];
       if (!c || c[3] === 0) continue;
       ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${(c[3] ?? 255)/255})`;
-      ctx.fillRect(i % 16, Math.floor(i / 16), 1, 1);
+      ctx.fillRect((i % 16) * 2, Math.floor(i / 16) * 2, 2, 2);
     }
     return;
   }
+
   if (!info.item && info.faces) {
     const f = info.faces[1];
-    ctx.drawImage(VH.atlasCanvas, (f % ATLAS_COLS) * 16, Math.floor(f / ATLAS_COLS) * 16, 16, 16, 1, 1, 14, 14);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(VH.atlasCanvas, (f % ATLAS_COLS) * TILE_PX, Math.floor(f / ATLAS_COLS) * TILE_PX, TILE_PX, TILE_PX, 2, 2, 28, 28);
     if (!info.torch && !info.crop) {
-      ctx.strokeStyle = "rgba(0,0,0,0.45)";
-      ctx.strokeRect(1, 1, 14, 14);
+      ctx.strokeStyle = "rgba(255, 215, 0, 0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(2, 2, 28, 28);
     }
     return;
   }
-  ctx.fillStyle = info.color || "#fff";
-  if (info.shape === "pick") {
-    ctx.fillRect(3, 2, 10, 3); ctx.fillRect(2, 4, 2, 2); ctx.fillRect(12, 4, 2, 2);
-    ctx.fillStyle = "#8a5d32"; ctx.fillRect(7, 5, 2, 10);
-  } else if (info.shape === "axe") {
-    ctx.fillRect(4, 2, 7, 5); ctx.fillRect(3, 4, 3, 4);
-    ctx.fillStyle = "#8a5d32"; ctx.fillRect(7, 5, 2, 10);
-  } else if (info.shape === "sword") {
-    for (let i=0;i<9;i++) ctx.fillRect(12-i, 2+i, 2, 2);
-    ctx.fillStyle = "#8a5d32"; ctx.fillRect(2, 11, 4, 3);
-    ctx.fillStyle = "#e8c454"; ctx.fillRect(4, 9, 4, 2);
-  } else if (info.shape === "stick") {
-    for (let i=0;i<10;i++) ctx.fillRect(3+i, 12-i, 2, 2);
-  } else if (info.shape === "ingot") {
-    ctx.fillRect(3, 6, 10, 5); ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.fillRect(4, 6, 8, 2);
-  } else if (info.shape === "gem") {
-    ctx.fillRect(5, 3, 6, 10); ctx.fillRect(3, 5, 10, 6);
-  } else if (info.shape === "food") {
-    ctx.fillRect(4, 4, 8, 8); ctx.fillRect(3, 6, 10, 4);
-  } else if (info.shape === "flint") {
-    ctx.fillStyle = "#8892a0"; ctx.fillRect(3, 7, 5, 6);
-    ctx.fillStyle = "#ff9922"; ctx.fillRect(8, 3, 4, 6);
-  } else if (info.shape === "bucket") {
-    ctx.fillStyle = "#bcc4d0"; ctx.fillRect(3, 4, 10, 9);
-    ctx.fillStyle = info.color; ctx.fillRect(4, 5, 8, 4);
-  } else if (info.shape === "seed") {
-    ctx.fillRect(4, 6, 3, 3); ctx.fillRect(9, 4, 3, 3); ctx.fillRect(7, 9, 3, 3);
-  } else if (info.shape === "bow") {
-    ctx.fillRect(4, 2, 2, 12); ctx.fillRect(6, 3, 2, 2); ctx.fillRect(8, 5, 2, 6); ctx.fillRect(6, 11, 2, 2);
-    ctx.fillStyle = "#e8e8e8"; ctx.fillRect(3, 2, 1, 12);
-  } else if (info.shape === "helmet") {
-    ctx.fillRect(3, 4, 10, 7); ctx.fillRect(5, 8, 6, 3);
-  } else if (info.shape === "chest") {
-    ctx.fillRect(3, 3, 10, 10); ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.fillRect(6, 3, 4, 3);
-  } else if (info.shape === "legs") {
-    ctx.fillRect(4, 3, 8, 4); ctx.fillRect(4, 7, 3, 7); ctx.fillRect(9, 7, 3, 7);
-  } else if (info.shape === "boots") {
-    ctx.fillRect(3, 7, 4, 6); ctx.fillRect(9, 7, 4, 6);
-  }
+
+  // Аниме RPG-иконки для предметов
+  const col = info.color || "#ffffff";
+  const drawOutlined = (fn) => {
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    fn();
+    ctx.restore();
+  };
+
+  drawOutlined(() => {
+    if (info.shape === "sword") {
+      // Клинок с золотой гардой и аниме-бликом
+      ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(8, 24); ctx.lineTo(26, 6); ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(10, 22); ctx.lineTo(26, 6); ctx.stroke();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(13, 19); ctx.lineTo(25, 7); ctx.stroke();
+      ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(8, 16); ctx.lineTo(16, 24); ctx.stroke();
+      ctx.strokeStyle = "#7c4a22"; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(6, 26); ctx.lineTo(11, 21); ctx.stroke();
+    } else if (info.shape === "pick") {
+      ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(7, 25); ctx.lineTo(22, 10); ctx.stroke();
+      ctx.strokeStyle = "#9c6230"; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(7, 25); ctx.lineTo(22, 10); ctx.stroke();
+      ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.arc(17, 15, 11, -Math.PI * 0.72, -Math.PI * 0.02); ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = 4.5;
+      ctx.beginPath(); ctx.arc(17, 15, 11, -Math.PI * 0.72, -Math.PI * 0.02); ctx.stroke();
+    } else if (info.shape === "axe") {
+      ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(7, 25); ctx.lineTo(22, 10); ctx.stroke();
+      ctx.strokeStyle = "#9c6230"; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(7, 25); ctx.lineTo(22, 10); ctx.stroke();
+      ctx.fillStyle = col; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(15, 7); ctx.lineTo(26, 8); ctx.lineTo(25, 19); ctx.lineTo(16, 15); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    } else if (info.shape === "bow") {
+      ctx.strokeStyle = "#e6eef8"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(9, 6); ctx.lineTo(9, 26); ctx.stroke();
+      ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(10, 16, 12, -Math.PI * 0.45, Math.PI * 0.45); ctx.stroke();
+      ctx.strokeStyle = "#b87438"; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.arc(10, 16, 12, -Math.PI * 0.45, Math.PI * 0.45); ctx.stroke();
+      ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(7, 16); ctx.lineTo(26, 16); ctx.stroke();
+    } else if (info.shape === "gem") {
+      ctx.fillStyle = col; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(16, 4); ctx.lineTo(26, 14); ctx.lineTo(16, 28); ctx.lineTo(6, 14); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      ctx.beginPath(); ctx.moveTo(16, 7); ctx.lineTo(21, 13); ctx.lineTo(14, 15); ctx.closePath(); ctx.fill();
+    } else if (info.shape === "ingot") {
+      ctx.fillStyle = col; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(8, 12); ctx.lineTo(24, 12); ctx.lineTo(28, 22); ctx.lineTo(4, 22); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fillRect(10, 14, 12, 3);
+    } else if (info.shape === "food") {
+      ctx.fillStyle = col; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(16, 17, 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.beginPath(); ctx.arc(12, 13, 3, 0, Math.PI * 2); ctx.fill();
+      if (id === 113) { ctx.fillStyle = "#4caf50"; ctx.fillRect(15, 4, 5, 4); }
+    } else if (info.shape === "bucket") {
+      ctx.fillStyle = "#c8d4e4"; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(6, 9); ctx.lineTo(26, 9); ctx.lineTo(23, 27); ctx.lineTo(9, 27); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = col; ctx.fillRect(8, 11, 16, 7);
+    } else if (info.shape === "flint") {
+      ctx.fillStyle = "#8896a8"; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2;
+      ctx.fillRect(6, 14, 10, 12); ctx.strokeRect(6, 14, 10, 12);
+      ctx.fillStyle = "#ff9922";
+      ctx.beginPath(); ctx.moveTo(20, 5); ctx.lineTo(26, 15); ctx.lineTo(17, 19); ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else if (info.shape === "helmet" || info.shape === "chest" || info.shape === "legs" || info.shape === "boots") {
+      ctx.fillStyle = col; ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 2.5;
+      if (info.shape === "helmet") { ctx.fillRect(6, 8, 20, 14); ctx.strokeRect(6, 8, 20, 14); ctx.fillStyle = "#120c1c"; ctx.fillRect(10, 16, 12, 6); }
+      else if (info.shape === "chest") { ctx.fillRect(6, 6, 20, 20); ctx.strokeRect(6, 6, 20, 20); ctx.fillStyle = "#ffd700"; ctx.fillRect(13, 12, 6, 6); }
+      else if (info.shape === "legs") { ctx.fillRect(8, 6, 16, 8); ctx.fillRect(8, 14, 6, 13); ctx.fillRect(18, 14, 6, 13); ctx.strokeRect(8, 6, 16, 8); }
+      else { ctx.fillRect(5, 14, 9, 12); ctx.fillRect(18, 14, 9, 12); ctx.strokeRect(5, 14, 9, 12); ctx.strokeRect(18, 14, 9, 12); }
+    } else {
+      ctx.strokeStyle = "#120c1c"; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(8, 24); ctx.lineTo(24, 8); ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(8, 24); ctx.lineTo(24, 8); ctx.stroke();
+    }
+  });
 }
 
 VH.ITEMS_DB = ITEMS_DB;

@@ -114,9 +114,10 @@ class MultiplayerManager {
     this.nick = "Игрок";
     this.onBlockRemote = null;
     this.onChatRemote = null;
-    this.onHostModsOffered = null; // Callback при получении модов от хоста
+    this.onHostModsOffered = null;
   }
   _genCode() { return "VH-" + Math.floor(1000 + Math.random() * 8999); }
+  isConnected() { return Boolean(this.peer && (this.isHost || this.conns.size > 0)); }
 
   hostRoom(nick, onStatus) {
     if (typeof Peer === "undefined") { onStatus("PeerJS не загружен (проверьте интернет)"); return; }
@@ -128,7 +129,7 @@ class MultiplayerManager {
     this.peer = new Peer(this.roomCode);
     this.peer.on("open", (id) => {
       onStatus("Комната открыта! Код для друзей: " + id);
-      if (this.onChatRemote) this.onChatRemote("Система", "Комната " + id + " открыта!");
+      if (this.onChatRemote) this.onChatRemote("Система", "Комната " + id + " открыта! Все блоки, сундуки, печи, лут, мобы и моды синхронизированы.");
     });
     this.peer.on("connection", (conn) => this._attachConn(conn));
     this.peer.on("error", (err) => onStatus("Ошибка сети: " + err.type));
@@ -151,41 +152,90 @@ class MultiplayerManager {
     this.peer.on("error", (err) => onStatus("Не удалось подключиться: " + err.type));
   }
 
+  sendToHost(payload) {
+    if (this.isHost) return;
+    for (const c of this.conns.values()) {
+      if (c.open) { try { c.send(payload); } catch {} break; }
+    }
+  }
+
   _attachConn(conn, onStatus) {
     conn.on("open", () => {
       this.conns.set(conn.peer, conn);
       if (onStatus) onStatus("Подключено к комнате " + this.roomCode + "!");
       if (this.onChatRemote) this.onChatRemote("Сеть", "Подключён игрок: " + conn.peer);
-      conn.send({ t: "hello", nick: this.nick, skinId: VH.activeSkinId || "explorer" });
 
-      // Если мы ХОСТ — сразу отправляем новому игроку пакет автоподкачки модов и сида мира!
-      if (this.isHost) {
-        const activeProjects = VH.modMgr.getActiveProjects();
+      conn.send({
+        t: "hello",
+        nick: this.nick,
+        skinId: VH.activeSkinId || "fox_officer",
+        customPng: VH.activeCustomSkinData || null
+      });
+
+      // Хост отправляет полную синхронизацию мира, мобов, сундуков, печей, дропа и модов!
+      if (this.isHost && VH.Engine) {
+        const eng = VH.Engine;
+        if (eng.world) {
+          eng.savedDimMods[eng.world.dimension] = Object.assign({}, eng.world.modifications);
+          eng.savedDimChests[eng.world.dimension] = Object.assign({}, eng.world.chests);
+        }
         conn.send({
-          t: "mods_sync",
-          seed: VH.Engine?.world?.seed || 100100,
-          dim: VH.Engine?.world?.dimension || "overworld",
-          projects: activeProjects
+          t: "world_init",
+          seed: eng.world?.seed || 100100,
+          dimension: eng.world?.dimension || "overworld",
+          worldTime: eng.worldTime,
+          dayCount: eng.dayCount,
+          hostPos: { x: eng.player.x, y: eng.player.y, z: eng.player.z },
+          dimMods: eng.savedDimMods,
+          dimChests: eng.savedDimChests,
+          furnaces: eng.furnaces ? Array.from(eng.furnaces.entries()) : [],
+          drops: eng.dropMgr ? eng.dropMgr.serializeAll() : [],
+          mobs: eng.mobMgr ? eng.mobMgr.serializeAll() : [],
+          projects: VH.modMgr.getActiveProjects()
         });
       }
     });
 
     conn.on("data", (msg) => {
       if (!msg || !msg.t) return;
-      if (msg.t === "hello" || msg.t === "pos") {
-        this._updateRemoteAvatar(conn.peer, msg);
-        if (this.isHost && msg.t === "pos") this.broadcast(msg, conn.peer);
+      const senderId = msg.senderId || conn.peer;
+      const relayTypes = ["pos", "skin", "blk", "chest_update", "furnace_update", "drop_spawn", "drop_pickup", "chat", "dim_sync"];
+      if (this.isHost && relayTypes.includes(msg.t)) {
+        this.broadcast(Object.assign({}, msg, { senderId }), conn.peer);
+      }
+
+      if (msg.t === "hello" || msg.t === "pos" || msg.t === "skin") {
+        this._updateRemoteAvatar(senderId, msg);
+      } else if (msg.t === "world_init" && !this.isHost) {
+        if (VH.Engine?.applyWorldSync) VH.Engine.applyWorldSync(msg);
+        if (this.onHostModsOffered) this.onHostModsOffered(msg);
       } else if (msg.t === "blk") {
         if (this.onBlockRemote) this.onBlockRemote(msg.x, msg.y, msg.z, msg.id);
-        if (this.isHost) this.broadcast(msg, conn.peer);
+      } else if (msg.t === "chest_update") {
+        if (VH.Engine?.applyChestSync) VH.Engine.applyChestSync(msg.dim, msg.x, msg.y, msg.z, msg.slots);
+      } else if (msg.t === "furnace_update") {
+        if (VH.Engine?.applyFurnaceSync) VH.Engine.applyFurnaceSync(msg.key, msg.state);
+      } else if (msg.t === "drop_spawn") {
+        const d = msg.drop;
+        if (VH.Engine?.dropMgr && d) VH.Engine.dropMgr.spawn(d.itemId, d.count, d.x, d.y, d.z, d.vx || 0, d.vy || 1.5, d.vz || 0, d.id, true);
+      } else if (msg.t === "drop_pickup") {
+        if (VH.Engine?.dropMgr) VH.Engine.dropMgr.remove(msg.id, true);
+      } else if (msg.t === "mob_sync" && !this.isHost) {
+        if (VH.Engine?.mobMgr) VH.Engine.mobMgr.applyNetworkSnapshot(msg.mobs);
+      } else if (msg.t === "mob_hit" && this.isHost) {
+        if (VH.Engine?.mobMgr) {
+          const mob = VH.Engine.mobMgr.mobs.find((m) => m.id === msg.id);
+          if (mob) VH.Engine.mobMgr.damageMob(mob, msg.dmg || 3, msg.dirX || 0, msg.dirZ || 0, (dead) => VH.Engine.handleMobLoot(dead));
+        }
+      } else if (msg.t === "dim_sync" && !this.isHost) {
+        if (VH.Engine?.switchDimension && VH.Engine.world?.dimension !== msg.dim) {
+          VH.Engine.switchDimension(msg.dim, true);
+        }
       } else if (msg.t === "chat") {
         if (this.onChatRemote) this.onChatRemote(msg.nick || "Игрок", msg.text);
-        if (this.isHost) this.broadcast(msg, conn.peer);
       } else if (msg.t === "mod_pkt") {
-        VH.modMgr.emit("onNetPacket", { peer: conn.peer, channel: msg.ch, data: msg.data });
-        if (this.isHost) this.broadcast(msg, conn.peer);
-      } else if (msg.t === "mods_sync" && !this.isHost) {
-        if (this.onHostModsOffered) this.onHostModsOffered(msg);
+        VH.modMgr.emit("onNetPacket", { peer: senderId, channel: msg.ch, data: msg.data });
+        if (this.isHost) this.broadcast(Object.assign({}, msg, { senderId }), conn.peer);
       }
     });
 
@@ -196,18 +246,69 @@ class MultiplayerManager {
     });
   }
 
+  _buildSkinForRemote(skinId, customPng) {
+    if (skinId === "custom" && customPng && customPng.startsWith("data:image/")) {
+      const img = new Image();
+      const obj = { id: "custom", name: "Свой скин", skin: "#e2b28b", hair: "#333", shirt: "#2ed573", pants: "#334", eye: "#fff", customImg: null };
+      img.onload = () => { obj.customImg = img; };
+      img.src = customPng;
+      return { obj, img };
+    }
+    return { obj: VH.DETAILED_SKINS.find((s) => s.id === skinId) || VH.DETAILED_SKINS[1], img: null };
+  }
+
   _updateRemoteAvatar(pid, msg) {
     let rp = this.remotePlayers.get(pid);
-    if (!rp) {
-      const skinObj = VH.SKINS_DB.find((s) => s.id === msg.skinId) || VH.SKINS_DB[1];
-      const mesh = VH.buildAvatarMesh(skinObj);
+    const skinChanged = rp && msg.skinId && (rp.skinId !== msg.skinId || (msg.customPng && rp.customPng !== msg.customPng));
+
+    if (!rp || skinChanged) {
+      const prevPos = rp ? { x: rp.x, y: rp.y, z: rp.z, yaw: rp.yaw } : { x: 0, y: 30, z: 0, yaw: 0 };
+      if (rp) this.scene.remove(rp.mesh);
+
+      const nick = msg.nick || (rp && rp.nick) || pid;
+      const skinId = msg.skinId || (rp && rp.skinId) || "fox_officer";
+      const customPng = msg.customPng || null;
+      const { obj, img } = this._buildSkinForRemote(skinId, customPng);
+      const mesh = VH.buildAvatarMesh(obj, nick);
+      mesh.position.set(prevPos.x, prevPos.y, prevPos.z);
       this.scene.add(mesh);
-      rp = { mesh, nick: msg.nick || pid, x: 0, y: 30, z: 0, yaw: 0 };
+
+      rp = { mesh, nick, skinId, customPng, x: prevPos.x, y: prevPos.y, z: prevPos.z, yaw: prevPos.yaw, walkPhase: 0 };
       this.remotePlayers.set(pid, rp);
+
+      if (img) {
+        img.onload = () => {
+          obj.customImg = img;
+          const cur = this.remotePlayers.get(pid);
+          if (!cur || cur.customPng !== customPng) return;
+          this.scene.remove(cur.mesh);
+          const newMesh = VH.buildAvatarMesh(obj, cur.nick);
+          newMesh.position.set(cur.x, cur.y, cur.z);
+          newMesh.rotation.y = cur.yaw + Math.PI;
+          this.scene.add(newMesh);
+          cur.mesh = newMesh;
+        };
+      }
     }
+
     if (typeof msg.x === "number") {
-      rp.mesh.position.set(msg.x, msg.y, msg.z);
-      rp.mesh.rotation.y = (msg.yaw || 0) + Math.PI;
+      const distMoved = Math.hypot(msg.x - rp.x, msg.z - rp.z);
+      rp.x = msg.x; rp.y = msg.y; rp.z = msg.z; rp.yaw = msg.yaw || 0;
+      rp.mesh.position.set(rp.x, rp.y, rp.z);
+      rp.mesh.rotation.y = rp.yaw + Math.PI;
+
+      if (distMoved > 0.01) {
+        rp.walkPhase += distMoved * 3.5;
+        const sw = Math.sin(rp.walkPhase) * 0.65;
+        if (rp.mesh.userData.legL) {
+          rp.mesh.userData.legL.rotation.x = sw;
+          rp.mesh.userData.legR.rotation.x = -sw;
+          rp.mesh.userData.armL.rotation.x = -sw;
+          rp.mesh.userData.armR.rotation.x = sw;
+        }
+      }
+      if (rp.mesh.userData.tail) rp.mesh.userData.tail.rotation.y = Math.sin(performance.now() * 0.006) * 0.28;
+      if (rp.mesh.userData.braids) rp.mesh.userData.braids.rotation.x = Math.sin(performance.now() * 0.005) * 0.12;
     }
   }
 
@@ -216,7 +317,8 @@ class MultiplayerManager {
       if (pid !== skipPeerId && conn.open) { try { conn.send(payload); } catch {} }
     }
   }
-  sendPos(x, y, z, yaw) { if (this.conns.size) this.broadcast({ t: "pos", nick: this.nick, skinId: VH.activeSkinId || "explorer", x, y, z, yaw }); }
+  sendPos(x, y, z, yaw) { if (this.conns.size) this.broadcast({ t: "pos", nick: this.nick, skinId: VH.activeSkinId || "fox_officer", x, y, z, yaw }); }
+  sendSkin() { if (this.conns.size) this.broadcast({ t: "skin", nick: this.nick, skinId: VH.activeSkinId || "fox_officer", customPng: VH.activeCustomSkinData || null }); }
   sendBlock(x, y, z, id) { if (this.conns.size) this.broadcast({ t: "blk", x, y, z, id }); }
   sendChat(text) { if (this.conns.size) this.broadcast({ t: "chat", nick: this.nick, text }); }
   sendModPacket(ch, data) { if (this.conns.size) this.broadcast({ t: "mod_pkt", ch, data }); }
@@ -227,11 +329,7 @@ class MultiplayerManager {
     for (const rp of this.remotePlayers.values()) this.scene.remove(rp.mesh);
     this.remotePlayers.clear();
     if (this.peer) { try { this.peer.destroy(); } catch {} this.peer = null; }
-    // Выгружаем временные моды хоста при выходе из комнаты!
-    if (VH.modMgr.sessionMods) {
-      VH.modMgr.sessionMods = null;
-      VH.modMgr.reloadAll();
-    }
+    if (VH.modMgr.sessionMods) { VH.modMgr.sessionMods = null; VH.modMgr.reloadAll(); }
   }
 }
 
@@ -240,6 +338,17 @@ class MultiplayerManager {
 // ============================================================================
 function createDefaultModProjects() {
   return [
+    {
+      id: "proj_anime_pack",
+      name: "🎨 Anime Overhaul (Хаб + HD Текстуры + GUI)",
+      enabled: true,
+      files: {
+        "manifest.json": JSON.stringify({ id: "proj_anime_pack", name: "Anime Overhaul", version: "3.2", entry: "scripts/main.js" }, null, 2),
+        "scripts/main.js":
+`// Главный визуальный мод: Аниме-Хаб, GUI и HD-текстуры блоков!
+if (VH.setAnimeTheme) VH.setAnimeTheme(true);`
+      }
+    },
     {
       id: "proj_portal",
       name: "Быстрый Портал (/portal)",
@@ -326,7 +435,7 @@ class ModManager {
   }
 
   async initFromDB() {
-    const saved = await VH.DB.get("mod_projects_v3", null);
+    const saved = await VH.DB.get("mod_projects_v32", null);
     if (Array.isArray(saved) && saved.length > 0) {
       this.projects = saved;
     } else {
@@ -336,7 +445,7 @@ class ModManager {
   }
 
   async saveProjects() {
-    await VH.DB.set("mod_projects_v3", this.projects);
+    await VH.DB.set("mod_projects_v32", this.projects);
   }
 
   getActiveProjects() {
@@ -364,6 +473,8 @@ class ModManager {
     this.logs = [];
 
     const active = this.getActiveProjects();
+    const animeOn = active.some((p) => p.id === "proj_anime_pack");
+    if (VH.setAnimeTheme) VH.setAnimeTheme(animeOn);
     for (const proj of active) {
       try {
         // Исполняем все .js файлы проекта (сначала библиотеки, затем scripts/main.js)
@@ -438,7 +549,7 @@ VH.Mods = {
   registerDimension: (id, def) => { VH.CUSTOM_DIMENSIONS[id] = def; },
   switchDimension: (id) => { if (VH.Engine?.switchDimension) VH.Engine.switchDimension(id); },
   registerRecipe: (outId, cnt, req, desc) => { if (VH.Engine?.CRAFT_RECIPES) VH.Engine.CRAFT_RECIPES.push({ out: outId, cnt, req, desc }); },
-  registerSmelt:  (outId, cnt, req, desc) => { if (VH.Engine?.SMELT_RECIPES) VH.Engine.SMELT_RECIPES.push({ out: outId, cnt, req, desc }); },
+  registerSmelt:  (inIdOrOut, outOrCnt, cntOrReq, desc) => { if (!VH.Engine?.SMELT_RECIPES) return; if (Array.isArray(cntOrReq)) { VH.Engine.SMELT_RECIPES.push({ inId: cntOrReq[0]?.[0], out: inIdOrOut, cnt: outOrCnt || 1, desc: desc || "" }); } else { VH.Engine.SMELT_RECIPES.push({ inId: inIdOrOut, out: outOrCnt, cnt: cntOrReq || 1, desc: desc || "" }); } },
   registerCommand: (name, handler) => { VH.CUSTOM_COMMANDS[(name.startsWith("/") ? name.slice(1) : name).toLowerCase()] = handler; },
   toast: (msg) => { if (VH.Engine?.showToast) VH.Engine.showToast(msg); },
   chat: (sender, msg) => { if (VH.Engine?.addChatLine) VH.Engine.addChatLine(sender, msg); },
