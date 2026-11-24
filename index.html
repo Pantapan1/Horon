@@ -3,146 +3,265 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>VoxelHorizon — 3D Песочница</title>
+  <title>VoxelHorizon v2.1</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
+  <div id="underwater-tint" class="hidden"></div>
+  <div id="portal-tint" class="hidden"></div>
 
-  <!-- ГЛАВНОЕ МЕНЮ -->
-  <div id="main-menu" class="overlay-screen">
-    <div class="menu-card">
-      <div class="logo-badge">VOXEL<span>HORIZON</span></div>
-      <div class="logo-sub">Оригинальная 3D-песочница • v1.0</div>
+  <!-- ГЛАВНОЕ МЕНЮ (КЛАССИЧЕСКИЙ СТИЛЬ) -->
+  <div id="main-menu" class="mc-screen">
+    <div class="mc-panorama"></div>
+    <div class="mc-title-wrap">
+      <div class="mc-logo">VOXELHORIZON</div>
+      <div class="mc-splash">v2.1 • Полный Modding Engine • Ад • 12 Мобов • P2P!</div>
+    </div>
 
-      <div class="menu-form">
-        <label>Название мира</label>
-        <input id="world-name-input" type="text" value="Мой Мир" maxlength="24" />
-        <label>Сид генерации (пусто = случайный)</label>
-        <input id="world-seed-input" type="text" placeholder="Например: 112233" maxlength="16" />
+    <div class="mc-menu-layout">
+      <div class="mc-menu-col">
+        <button id="btn-open-worlds" class="mc-btn big">Играть</button>
+        <button id="btn-open-mp" class="mc-btn">Мультиплеер (P2P)</button>
+        <button id="btn-open-mods" class="mc-btn">Моды (JS API)</button>
+        <button id="btn-open-settings" class="mc-btn">Настройки</button>
+      </div>
+      <div class="mc-skin-preview-box">
+        <canvas id="menu-skin-canvas" width="96" height="144"></canvas>
+        <div id="menu-skin-name">Скин: Искатель</div>
+        <button id="btn-open-skins" class="mc-btn small">Гардероб (Скины)</button>
+      </div>
+    </div>
+  </div>
 
-        <div class="mode-row">
-          <button id="mode-survival" class="mode-btn active">Выживание</button>
-          <button id="mode-creative" class="mode-btn">Творчество</button>
+  <!-- МЕНЮ МИРОВ И СОЗДАНИЯ МИРА -->
+  <div id="worlds-modal" class="mc-screen hidden">
+    <div class="mc-panel wide">
+      <div class="mc-panel-head">
+        <span>Миры</span>
+        <button id="btn-close-worlds" class="mc-btn tiny">✕</button>
+      </div>
+      <div class="mc-create-box">
+        <input id="world-name-input" class="mc-input" type="text" value="Новый Мир" placeholder="Название мира" maxlength="24" />
+        <input id="world-seed-input" class="mc-input" type="text" placeholder="Сид (пусто = случайный)" maxlength="16" />
+        <div class="mc-row">
+          <button id="mode-survival" class="mc-btn small active">Выживание</button>
+          <button id="mode-creative" class="mc-btn small">Творчество</button>
+          <button id="btn-play" class="mc-btn small green">Создать мир</button>
         </div>
       </div>
+      <div id="saved-worlds-list" class="mc-scroll-list"></div>
+    </div>
+  </div>
 
-      <button id="btn-play" class="primary-btn">ИГРАТЬ</button>
-      <div id="saved-worlds-list" class="saved-list"></div>
-
-      <div class="menu-footer">
-        <button id="btn-open-settings" class="sec-btn">Настройки графики</button>
+  <!-- ГАРДЕРОБ (СКИНЫ) -->
+  <div id="skins-modal" class="mc-screen hidden">
+    <div class="mc-panel wide">
+      <div class="mc-panel-head">
+        <span>Выбор Скина</span>
+        <button id="btn-close-skins" class="mc-btn tiny">✕</button>
       </div>
+      <div id="skins-grid" class="mc-skins-grid"></div>
+      <div class="mc-row" style="margin-top:8px">
+        <label class="mc-btn small" style="text-align:center;cursor:pointer">
+          Загрузить свой PNG-скин
+          <input id="inp-custom-skin" type="file" accept="image/png" class="hidden" />
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- МУЛЬТИПЛЕЕР (P2P КОМНАТЫ) -->
+  <div id="mp-modal" class="mc-screen hidden">
+    <div class="mc-panel">
+      <div class="mc-panel-head">
+        <span>Мультиплеер (P2P)</span>
+        <button id="btn-close-mp" class="mc-btn tiny">✕</button>
+      </div>
+      <div class="mc-field-lbl">Ваш никнейм:</div>
+      <input id="mp-nick-input" class="mc-input" type="text" value="Игрок" maxlength="16" />
+      <div class="mc-row" style="margin-top:8px">
+        <button id="btn-mp-host" class="mc-btn small green">Создать комнату</button>
+      </div>
+      <div id="mp-host-status" class="mc-status-box">Нажмите «Создать комнату» внутри мира или введите код друга ниже.</div>
+      <div class="mc-field-lbl">Код комнаты друга:</div>
+      <div class="mc-row">
+        <input id="mp-join-code" class="mc-input" type="text" placeholder="Например: VH-4821" maxlength="12" />
+        <button id="btn-mp-join" class="mc-btn small">Войти</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- МЕНЕДЖЕР МОДОВ (ПОЛНЫЙ JS MODDING ENGINE) -->
+  <div id="mods-modal" class="mc-screen hidden">
+    <div class="mc-panel wide">
+      <div class="mc-panel-head">
+        <span>Моды — Полный доступ к движку (VH.Mods + VH.Engine)</span>
+        <button id="btn-close-mods" class="mc-btn tiny">✕</button>
+      </div>
+      <div id="mods-list" class="mc-scroll-list" style="max-height:125px"></div>
+      <div class="mc-field-lbl">Редактор JS-мода (доступны: VH.Mods, VH.Engine, THREE, document):</div>
+      <input id="mod-name-inp" class="mc-input" type="text" placeholder="Название мода (напр. Супер Мод)" />
+      <textarea id="mod-code-inp" class="mc-textarea" rows="5" placeholder="// Полный доступ к игре! Пример:&#10;VH.Mods.registerBlock(55, { name:'Прыгун', color:'#44ff88', onStep: ({player}) => player.vy = 14 });&#10;VH.Mods.give(55, 8);"></textarea>
+      <div class="mc-row">
+        <button id="btn-mod-add" class="mc-btn small green">Сохранить и Включить</button>
+        <label class="mc-btn small" style="text-align:center;cursor:pointer">
+          Импорт .js файла
+          <input id="inp-mod-file" type="file" accept=".js,text/javascript" class="hidden" />
+        </label>
+      </div>
+      <div class="mc-field-lbl">Консоль модов (логи и ошибки):</div>
+      <pre id="mod-console-log" class="mc-console"></pre>
+    </div>
+  </div>
+
+  <!-- ПОЛЬЗОВАТЕЛЬСКОЕ ОКНО ДЛЯ МОДОВ (VH.Mods.ui.showModal) -->
+  <div id="mod-custom-modal" class="mc-screen hidden" style="z-index:55">
+    <div class="mc-panel wide">
+      <div class="mc-panel-head">
+        <span id="mod-custom-title">Окно Мода</span>
+        <button id="btn-close-mod-custom" class="mc-btn tiny">✕</button>
+      </div>
+      <div id="mod-custom-body"></div>
     </div>
   </div>
 
   <!-- НАСТРОЙКИ -->
-  <div id="settings-modal" class="overlay-screen hidden">
-    <div class="menu-card small-card">
-      <h2>Настройки</h2>
-      <div class="setting-row">
+  <div id="settings-modal" class="mc-screen hidden">
+    <div class="mc-panel">
+      <div class="mc-panel-head">
+        <span>Настройки</span>
+        <button id="btn-close-settings" class="mc-btn tiny">✕</button>
+      </div>
+      <div class="mc-set-row">
         <span>Дальность прорисовки: <b id="lbl-render-dist">3</b> чанка</span>
         <input id="inp-render-dist" type="range" min="2" max="5" value="3" />
       </div>
-      <div class="setting-row">
-        <span>Чувствительность камеры: <b id="lbl-sens">1.0</b></span>
+      <div class="mc-set-row">
+        <span>Чувствительность: <b id="lbl-sens">1.0</b></span>
         <input id="inp-sens" type="range" min="0.4" max="2.2" step="0.1" value="1.0" />
       </div>
-      <div class="setting-row">
-        <span>Звуковые эффекты</span>
+      <div class="mc-set-row">
+        <span>Управление: <b id="lbl-ctrl">Крестовина (PE)</b></span>
+        <button id="btn-toggle-ctrl" class="mc-btn tiny">Сменить</button>
+      </div>
+      <div class="mc-set-row">
+        <span>Звуки</span>
         <input id="inp-sound" type="checkbox" checked />
       </div>
-      <button id="btn-close-settings" class="primary-btn">Сохранить</button>
+      <button id="btn-save-settings" class="mc-btn green" style="margin-top:10px">Готово</button>
     </div>
   </div>
 
-  <!-- ИГРОВОЙ HUD -->
+  <!-- ИГРОВОЙ HUD (КЛАССИЧЕСКИЙ MINECRAFT PE) -->
   <div id="hud" class="hidden">
     <div id="crosshair"></div>
-    <div id="mine-ring" class="hidden"><div id="mine-fill"></div></div>
+    <div id="mine-bar" class="hidden"><div id="mine-fill"></div></div>
 
-    <!-- Верхняя панель статуса -->
     <div id="top-bar">
-      <div id="coords-box">X:0 Y:0 Z:0 | День 1</div>
-      <div id="top-actions">
-        <button id="btn-craft-open" class="hud-chip">Крафт</button>
-        <button id="btn-inv-open" class="hud-chip">Рюкзак</button>
-        <button id="btn-pause" class="hud-chip">Меню</button>
+      <div id="coords-box">Позиция: 0, 30, 0 | Обычный мир</div>
+      <div id="top-btns">
+        <button id="btn-cam-view" class="mc-hud-btn" title="Камера">👁</button>
+        <button id="btn-chat-open" class="mc-hud-btn" title="Чат">💬</button>
+        <button id="btn-mp-ingame" class="mc-hud-btn" title="Сеть">🌐</button>
+        <button id="btn-pause" class="mc-hud-btn" title="Пауза">❚❚</button>
       </div>
     </div>
 
+    <div id="chat-log"></div>
     <div id="toast-msg" class="hidden"></div>
+    <div id="mod-hud-layer"></div>
 
-    <!-- Полосы ХП и Голода (Выживание) -->
-    <div id="status-bars">
-      <div class="stat-pill"><span class="stat-ico hp">♥</span><div class="bar-track"><div id="hp-fill" class="bar-fill hp-fill"></div></div><span id="hp-text">20</span></div>
-      <div class="stat-pill"><span class="stat-ico fd">◆</span><div class="bar-track"><div id="fd-fill" class="bar-fill fd-fill"></div></div><span id="fd-text">20</span></div>
+    <!-- Классические Сердца и Голод над Хотбаром -->
+    <div id="classic-bars">
+      <div id="hearts-row" class="icon-row"></div>
+      <div id="food-row" class="icon-row"></div>
     </div>
 
-    <!-- Хотбар (9 слотов) -->
-    <div id="hotbar"></div>
+    <!-- Хотбар (9 слотов + кнопка «...» Инвентаря справа!) -->
+    <div id="hotbar-wrap">
+      <div id="hotbar"></div>
+      <button id="btn-inv-dots" class="mc-slot inv-dots">•••</button>
+    </div>
 
-    <!-- Мобильное сенсорное управление -->
-    <div id="touch-controls">
-      <div id="joy-zone">
-        <div id="joy-base"><div id="joy-knob"></div></div>
-      </div>
-      <div id="right-btns">
-        <button id="btn-touch-break" class="act-btn act-break">ЛОМАТЬ</button>
-        <button id="btn-touch-place" class="act-btn act-place">СТАВИТЬ</button>
-        <button id="btn-touch-jump"  class="act-btn act-jump">▲</button>
-        <button id="btn-touch-fly"   class="act-btn act-fly hidden">ПОЛЁТ</button>
+    <!-- КЛАССИЧЕСКАЯ КРЕСТОВИНА (D-PAD) СЛЕВА + ПРЫЖОК/ПРИСЕД СПРАВА -->
+    <div id="dpad-zone">
+      <button id="dp-up"    class="dp-btn dp-up">▲</button>
+      <button id="dp-left"  class="dp-btn dp-left">◀</button>
+      <button id="dp-mid"   class="dp-btn dp-mid">●</button>
+      <button id="dp-right" class="dp-btn dp-right">▶</button>
+      <button id="dp-down"  class="dp-btn dp-down">▼</button>
+    </div>
+
+    <!-- Альтернативный джойстик (если переключили в настройках) -->
+    <div id="joy-zone" class="hidden">
+      <div id="joy-base"><div id="joy-knob"></div></div>
+    </div>
+
+    <div id="right-touch">
+      <button id="btn-jump" class="dp-btn rt-jump">▲</button>
+      <button id="btn-sneak" class="dp-btn rt-sneak">▼</button>
+      <button id="btn-fly" class="dp-btn rt-fly hidden">✈</button>
+    </div>
+  </div>
+
+  <!-- ЧАТ ВВОД -->
+  <div id="chat-modal" class="mc-screen hidden" style="background:rgba(0,0,0,0.45);align-items:flex-end">
+    <div class="mc-panel wide" style="margin-bottom:14px">
+      <div class="mc-row">
+        <input id="chat-input" class="mc-input" type="text" placeholder="Сообщение или команда (/nether, /overworld, /time day, /give)..." />
+        <button id="btn-chat-send" class="mc-btn small green">Отправить</button>
+        <button id="btn-chat-close" class="mc-btn tiny">✕</button>
       </div>
     </div>
   </div>
 
-  <!-- МОДАЛКА КРАФТА / ПЕЧИ / ИНВЕНТАРЯ -->
-  <div id="craft-modal" class="overlay-screen hidden">
-    <div class="menu-card wide-card">
-      <div class="modal-head">
-        <h2 id="modal-title">Верстак и Рецепты</h2>
-        <button id="btn-close-craft" class="hud-chip">✕</button>
+  <!-- КЛАССИЧЕСКИЙ ИНВЕНТАРЬ / КРАФТ / ПЕЧЬ -->
+  <div id="inv-modal" class="mc-screen hidden">
+    <div class="mc-panel wide">
+      <div class="mc-panel-head">
+        <span id="inv-title">Инвентарь и Крафт</span>
+        <button id="btn-close-inv" class="mc-btn tiny">✕</button>
       </div>
-      <div class="tabs-row">
-        <button id="tab-craft" class="tab-btn active">Крафт (2×2 / 3×3)</button>
-        <button id="tab-smelt" class="tab-btn">Переплавка (Печь)</button>
-        <button id="tab-bag"   class="tab-btn">Весь Инвентарь</button>
+      <div class="mc-row" style="margin-bottom:8px">
+        <button id="tab-bag"   class="mc-btn small active">Инвентарь</button>
+        <button id="tab-craft" class="mc-btn small">Крафт</button>
+        <button id="tab-smelt" class="mc-btn small">Печь</button>
       </div>
-      <div id="modal-content" class="recipes-grid"></div>
+      <div id="inv-content" class="mc-inv-grid"></div>
     </div>
   </div>
 
   <!-- ПАУЗА -->
-  <div id="pause-modal" class="overlay-screen hidden">
-    <div class="menu-card small-card">
-      <h2>Пауза</h2>
-      <button id="btn-resume" class="primary-btn">Продолжить игру</button>
-      <button id="btn-save-now" class="sec-btn">Сохранить мир</button>
-      <button id="btn-toggle-mode" class="sec-btn">Сменить режим (Выживание / Творчество)</button>
-      <button id="btn-pause-settings" class="sec-btn">Настройки</button>
-      <button id="btn-exit-menu" class="danger-btn">Выйти в главное меню</button>
+  <div id="pause-modal" class="mc-screen hidden">
+    <div class="mc-panel" style="text-align:center">
+      <div class="mc-panel-head"><span>Меню Паузы</span></div>
+      <button id="btn-resume" class="mc-btn green">Вернуться в игру</button>
+      <button id="btn-save-now" class="mc-btn">Сохранить мир</button>
+      <button id="btn-toggle-dim" class="mc-btn">Телепорт: Обычный мир / Ад</button>
+      <button id="btn-toggle-mode" class="mc-btn">Сменить режим игры</button>
+      <button id="btn-pause-mods" class="mc-btn">Моды (JS API)</button>
+      <button id="btn-pause-settings" class="mc-btn">Настройки</button>
+      <button id="btn-exit-menu" class="mc-btn red">Сохранить и выйти</button>
     </div>
   </div>
 
   <!-- ЭКРАН СМЕРТИ -->
-  <div id="death-modal" class="overlay-screen hidden">
-    <div class="menu-card small-card">
-      <h2 style="color:#ff5c6c">Вы погибли!</h2>
-      <p style="color:#a7b6c8;margin:8px 0 18px">Вы потеряли часть опыта, но можете возродиться на спавне.</p>
-      <button id="btn-respawn" class="primary-btn">Возродиться</button>
+  <div id="death-modal" class="mc-screen hidden" style="background:rgba(90,12,12,0.78)">
+    <div class="mc-panel" style="text-align:center">
+      <h2 style="color:#ff5555;margin-bottom:10px">Вы погибли!</h2>
+      <button id="btn-respawn" class="mc-btn green">Возродиться</button>
     </div>
   </div>
 
-  <!-- Загрузка Three.js (офлайн внутри APK + резервный CDN для браузера) -->
   <script src="three.min.js"></script>
-  <script>
-    if (typeof THREE === 'undefined') {
-      document.write('<script src="https://unpkg.com/three@0.149.0/build/three.min.js"><\/script>');
-    }
-  </script>
+  <script>if (typeof THREE === 'undefined') document.write('<script src="https://unpkg.com/three@0.149.0/build/three.min.js"><\/script>');</script>
+  <script src="peerjs.min.js"></script>
+  <script>if (typeof Peer === 'undefined') document.write('<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"><\/script>');</script>
   <script src="textures.js"></script>
   <script src="world.js"></script>
   <script src="entities.js"></script>
+  <script src="multiplayer_mods.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

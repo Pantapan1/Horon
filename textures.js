@@ -1,63 +1,118 @@
 // ============================================================================
-// VOXELHORIZON — РЕЕСТР БЛОКОВ/ПРЕДМЕТОВ И ПРОЦЕДУРНЫЙ АТЛАС ТЕКСТУР (100% ОРИГИНАЛ)
+// VOXELHORIZON v2.0 — ВЫСОКОДЕТАЛЬНЫЙ 16x16 АТЛАС, АНИМАЦИЯ ВОДЫ/ЛАВЫ/ПОРТАЛА, СКИНЫ
 // ============================================================================
 window.VH = window.VH || {};
 
-// Блоки: 1..28 | Предметы (не ставятся как блоки): 101..115
 const ITEMS_DB = {
-  0:   { name: "Воздух",          solid: false, transparent: true },
-  1:   { name: "Дёрн",            solid: true,  hard: 0.6, drop: 2,   tool: "shovel", faces: [0, 1, 2] }, // top, side, bottom
-  2:   { name: "Земля",           solid: true,  hard: 0.5, drop: 2,   tool: "shovel", faces: [2, 2, 2] },
-  3:   { name: "Камень",          solid: true,  hard: 1.8, drop: 4,   tool: "pick",   faces: [3, 3, 3] },
-  4:   { name: "Булыжник",        solid: true,  hard: 2.0, drop: 4,   tool: "pick",   faces: [4, 4, 4] },
-  5:   { name: "Дубовое бревно",  solid: true,  hard: 1.5, drop: 5,   tool: "axe",    faces: [5, 6, 5] },
-  6:   { name: "Листва",          solid: true,  hard: 0.3, drop: 0,   transparent: true, faces: [7, 7, 7] },
-  7:   { name: "Доски",           solid: true,  hard: 1.2, drop: 7,   tool: "axe",    faces: [8, 8, 8] },
-  8:   { name: "Песок",           solid: true,  hard: 0.5, drop: 8,   tool: "shovel", faces: [9, 9, 9] },
-  9:   { name: "Вода",            solid: false, liquid: true, transparent: true, faces: [10, 10, 10] },
-  10:  { name: "Коренная порода", solid: true,  hard: 999, drop: 0,   faces: [11, 11, 11] },
-  11:  { name: "Угольная руда",   solid: true,  hard: 2.2, drop: 101, tool: "pick",   faces: [12, 12, 12] },
-  12:  { name: "Железная руда",   solid: true,  hard: 2.6, drop: 12,  tool: "pick",   faces: [13, 13, 13] },
-  13:  { name: "Золотая руда",    solid: true,  hard: 2.8, drop: 13,  tool: "pick",   faces: [14, 14, 14] },
-  14:  { name: "Алмазная руда",   solid: true,  hard: 3.4, drop: 104, tool: "pick",   faces: [15, 15, 15] },
-  15:  { name: "Стекло",          solid: true,  hard: 0.4, drop: 15,  transparent: true, faces: [16, 16, 16] },
-  16:  { name: "Кирпичи",         solid: true,  hard: 2.0, drop: 16,  tool: "pick",   faces: [17, 17, 17] },
-  17:  { name: "Верстак",         solid: true,  hard: 1.4, drop: 17,  tool: "axe",    interactive: "craft", faces: [18, 19, 8] },
-  18:  { name: "Печь",            solid: true,  hard: 2.4, drop: 18,  tool: "pick",   interactive: "smelt", faces: [20, 21, 20] },
-  19:  { name: "Снег",            solid: true,  hard: 0.4, drop: 19,  tool: "shovel", faces: [22, 23, 2] },
-  20:  { name: "Лёд",             solid: true,  hard: 0.6, drop: 20,  transparent: true, faces: [24, 24, 24] },
-  21:  { name: "Кактус",          solid: true,  hard: 0.5, drop: 21,  faces: [25, 26, 25] },
-  22:  { name: "Обсидиан",        solid: true,  hard: 6.0, drop: 22,  tool: "pick",   faces: [27, 27, 27] },
-  23:  { name: "Лампа Кристалла", solid: true,  hard: 0.6, drop: 23,  light: true,    faces: [28, 28, 28] },
-  24:  { name: "Книжная полка",   solid: true,  hard: 1.2, drop: 24,  tool: "axe",    faces: [8, 29, 8] },
-  25:  { name: "Гравий",          solid: true,  hard: 0.6, drop: 25,  tool: "shovel", faces: [30, 30, 30] },
-  26:  { name: "Динамит (TNT)",   solid: true,  hard: 0.4, drop: 26,  interactive: "tnt", faces: [31, 32, 31] },
+  0:   { name: "Воздух",           solid: false, transparent: true },
+  1:   { name: "Дёрн",             solid: true,  hard: 0.6, drop: 2,   tool: "shovel", faces: [0, 1, 2] },
+  2:   { name: "Земля",            solid: true,  hard: 0.5, drop: 2,   tool: "shovel", faces: [2, 2, 2] },
+  3:   { name: "Камень",           solid: true,  hard: 1.8, drop: 4,   tool: "pick",   faces: [3, 3, 3] },
+  4:   { name: "Булыжник",         solid: true,  hard: 2.0, drop: 4,   tool: "pick",   faces: [4, 4, 4] },
+  5:   { name: "Дуб",              solid: true,  hard: 1.5, drop: 5,   tool: "axe",    faces: [5, 6, 5] },
+  6:   { name: "Листва дуба",      solid: true,  hard: 0.25,drop: 0,   transparent: true, faces: [7, 7, 7] },
+  7:   { name: "Дубовые доски",    solid: true,  hard: 1.2, drop: 7,   tool: "axe",    faces: [8, 8, 8] },
+  8:   { name: "Песок",            solid: true,  hard: 0.5, drop: 8,   tool: "shovel", faces: [9, 9, 9] },
+  9:   { name: "Вода",             solid: false, liquid: "water", transparent: true, faces: [10, 10, 10] },
+  10:  { name: "Бедрок",           solid: true,  hard: 999, drop: 0,   faces: [11, 11, 11] },
+  11:  { name: "Угольная руда",    solid: true,  hard: 2.2, drop: 101, tool: "pick",   faces: [12, 12, 12] },
+  12:  { name: "Железная руда",    solid: true,  hard: 2.6, drop: 12,  tool: "pick",   faces: [13, 13, 13] },
+  13:  { name: "Золотая руда",     solid: true,  hard: 2.8, drop: 13,  tool: "pick",   faces: [14, 14, 14] },
+  14:  { name: "Алмазная руда",    solid: true,  hard: 3.4, drop: 104, tool: "pick",   faces: [15, 15, 15] },
+  15:  { name: "Стекло",           solid: true,  hard: 0.35,drop: 15,  transparent: true, faces: [16, 16, 16] },
+  16:  { name: "Кирпичи",          solid: true,  hard: 2.0, drop: 16,  tool: "pick",   faces: [17, 17, 17] },
+  17:  { name: "Верстак",          solid: true,  hard: 1.4, drop: 17,  tool: "axe",    interactive: "craft", faces: [18, 19, 8] },
+  18:  { name: "Печь",             solid: true,  hard: 2.4, drop: 18,  tool: "pick",   interactive: "smelt", faces: [20, 21, 20] },
+  19:  { name: "Снег",             solid: true,  hard: 0.4, drop: 19,  tool: "shovel", faces: [22, 23, 2] },
+  20:  { name: "Лёд",              solid: true,  hard: 0.6, drop: 20,  transparent: true, faces: [24, 24, 24] },
+  21:  { name: "Кактус",           solid: true,  hard: 0.5, drop: 21,  faces: [25, 26, 25] },
+  22:  { name: "Обсидиан",         solid: true,  hard: 5.5, drop: 22,  tool: "pick",   faces: [27, 27, 27] },
+  23:  { name: "Светокамень",      solid: true,  hard: 0.5, drop: 23,  light: true,    faces: [28, 28, 28] },
+  24:  { name: "Книжная полка",    solid: true,  hard: 1.2, drop: 24,  tool: "axe",    faces: [8, 29, 8] },
+  25:  { name: "Гравий",           solid: true,  hard: 0.6, drop: 25,  tool: "shovel", faces: [30, 30, 30] },
+  26:  { name: "Динамит (TNT)",    solid: true,  hard: 0.4, drop: 26,  interactive: "tnt", faces: [31, 32, 31] },
+  27:  { name: "Берёза",           solid: true,  hard: 1.5, drop: 27,  tool: "axe",    faces: [5, 33, 5] },
+  28:  { name: "Песчаник",         solid: true,  hard: 1.4, drop: 28,  tool: "pick",   faces: [34, 34, 34] },
+  29:  { name: "Лава",             solid: false, liquid: "lava", transparent: true, light: true, faces: [35, 35, 35] },
+  30:  { name: "Адский камень",    solid: true,  hard: 0.7, drop: 30,  tool: "pick",   faces: [36, 36, 36] },
+  31:  { name: "Песок душ",        solid: true,  hard: 0.6, drop: 31,  tool: "shovel", faces: [37, 37, 37] },
+  32:  { name: "Адский кирпич",    solid: true,  hard: 2.2, drop: 32,  tool: "pick",   faces: [38, 38, 38] },
+  33:  { name: "Кварцевая руда",   solid: true,  hard: 2.0, drop: 117, tool: "pick",   faces: [39, 39, 39] },
+  34:  { name: "Портал в Ад",      solid: false, portal: true, transparent: true, light: true, faces: [40, 40, 40] },
+  35:  { name: "Сундук",           solid: true,  hard: 1.4, drop: 35,  tool: "axe",    interactive: "bag", faces: [41, 42, 41] },
+  36:  { name: "Изумрудная руда",  solid: true,  hard: 3.2, drop: 118, tool: "pick",   faces: [43, 43, 43] },
 
-  // Предметы (не блоки)
-  101: { name: "Уголь",           item: true, color: "#2b2d34", shape: "gem" },
-  102: { name: "Железный слиток", item: true, color: "#d8dee8", shape: "ingot" },
-  103: { name: "Золотой слиток",  item: true, color: "#f6c945", shape: "ingot" },
-  104: { name: "Алмаз",           item: true, color: "#4ce8ff", shape: "gem" },
-  105: { name: "Палка",           item: true, color: "#9c6d3e", shape: "stick" },
-  106: { name: "Деревянная кирка",item: true, color: "#b8864b", shape: "pick",   toolType: "pick", power: 2.2, dmg: 3 },
-  107: { name: "Каменная кирка",  item: true, color: "#9299a4", shape: "pick",   toolType: "pick", power: 3.5, dmg: 4 },
-  108: { name: "Железная кирка",  item: true, color: "#dce4f0", shape: "pick",   toolType: "pick", power: 5.0, dmg: 5 },
-  109: { name: "Алмазная кирка",  item: true, color: "#4ce8ff", shape: "pick",   toolType: "pick", power: 7.5, dmg: 6 },
-  110: { name: "Каменный топор",  item: true, color: "#9299a4", shape: "axe",    toolType: "axe",  power: 3.8, dmg: 6 },
-  111: { name: "Железный меч",    item: true, color: "#dce4f0", shape: "sword",  toolType: "sword",power: 1.5, dmg: 8 },
-  112: { name: "Алмазный меч",    item: true, color: "#4ce8ff", shape: "sword",  toolType: "sword",power: 1.8, dmg: 12 },
-  113: { name: "Яблоко",          item: true, color: "#e84148", shape: "food",   healFood: 5, healHp: 2 },
-  114: { name: "Сырое мясо",      item: true, color: "#d66862", shape: "food",   healFood: 3, healHp: 1 },
-  115: { name: "Жареный стейк",   item: true, color: "#8c4a2b", shape: "food",   healFood: 9, healHp: 5 }
+  // Предметы
+  101: { name: "Уголь",            item: true, color: "#2b2d34", shape: "gem" },
+  102: { name: "Железный слиток",  item: true, color: "#dfe6f0", shape: "ingot" },
+  103: { name: "Золотой слиток",   item: true, color: "#ffd23f", shape: "ingot" },
+  104: { name: "Алмаз",            item: true, color: "#4ceeff", shape: "gem" },
+  105: { name: "Палка",            item: true, color: "#9c6d3e", shape: "stick" },
+  106: { name: "Деревянная кирка", item: true, color: "#b8864b", shape: "pick",  toolType: "pick",  power: 2.2, dmg: 3 },
+  107: { name: "Каменная кирка",   item: true, color: "#9299a4", shape: "pick",  toolType: "pick",  power: 3.6, dmg: 4 },
+  108: { name: "Железная кирка",   item: true, color: "#e4ecf5", shape: "pick",  toolType: "pick",  power: 5.2, dmg: 5 },
+  109: { name: "Алмазная кирка",   item: true, color: "#4ceeff", shape: "pick",  toolType: "pick",  power: 8.0, dmg: 6 },
+  110: { name: "Каменный топор",   item: true, color: "#9299a4", shape: "axe",   toolType: "axe",   power: 4.0, dmg: 6 },
+  111: { name: "Железный меч",     item: true, color: "#e4ecf5", shape: "sword", toolType: "sword", power: 1.6, dmg: 8 },
+  112: { name: "Алмазный меч",     item: true, color: "#4ceeff", shape: "sword", toolType: "sword", power: 2.0, dmg: 12 },
+  113: { name: "Яблоко",           item: true, color: "#e8383f", shape: "food",  healFood: 5, healHp: 2 },
+  114: { name: "Сырая говядина",   item: true, color: "#d65d58", shape: "food",  healFood: 3, healHp: 1 },
+  115: { name: "Жареный стейк",    item: true, color: "#8c4524", shape: "food",  healFood: 9, healHp: 5 },
+  116: { name: "Огниво (Портал)",  item: true, color: "#ff9922", shape: "flint", ignitePortal: true },
+  117: { name: "Адский кварц",     item: true, color: "#f4efe8", shape: "gem" },
+  118: { name: "Изумруд",          item: true, color: "#34e86c", shape: "gem" },
+  119: { name: "Ведро воды",       item: true, color: "#3898ff", shape: "bucket", placeLiquid: 9 },
+  120: { name: "Ведро лавы",       item: true, color: "#ff6618", shape: "bucket", placeLiquid: 29 }
 };
 
 const ATLAS_COLS = 8;
+const ATLAS_ROWS = 12;
 const TILE_PX = 16;
+
+// 6 оригинальных скинов для игрока и мультиплеера
+const SKINS_DB = [
+  { id: "explorer", name: "Искатель",  skin: "#e2b28b", hair: "#4a321d", shirt: "#2898b8", pants: "#38467a", eye: "#2448a8" },
+  { id: "ranger",   name: "Рейнджер",  skin: "#ebbfa0", hair: "#b86428", shirt: "#3d8c40", pants: "#4d3e30", eye: "#2d8a42" },
+  { id: "knight",   name: "Рыцарь",    skin: "#d8a884", hair: "#5a6270", shirt: "#8c96a6", pants: "#4a5260", eye: "#38c8ff" },
+  { id: "shadow",   name: "Тень",      skin: "#d2a892", hair: "#1e1a28", shirt: "#2c223c", pants: "#1c1826", eye: "#d24cff" },
+  { id: "crimson",  name: "Огненный",  skin: "#e0ad86", hair: "#321814", shirt: "#b82c2c", pants: "#3a2224", eye: "#ffaa22" },
+  { id: "cyber",    name: "Кибер",     skin: "#d8c0b0", hair: "#1e2a38", shirt: "#243448", pants: "#1c2430", eye: "#2eff98" }
+];
+
+function drawSkinPreview(canvas, skinObj) {
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const w = canvas.width, h = canvas.height;
+  const u = Math.floor(w / 16);
+  const ox = Math.floor((w - u * 16) / 2);
+  const oy = Math.floor((h - u * 24) / 2);
+
+  if (skinObj && skinObj.customImg) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(skinObj.customImg, 0, 0, w, h);
+    return;
+  }
+  const s = skinObj || SKINS_DB[0];
+  const rect = (x, y, rw, rh, c) => { ctx.fillStyle = c; ctx.fillRect(ox + x * u, oy + y * u, rw * u, rh * u); };
+  // Голова
+  rect(4, 0, 8, 8, s.skin);
+  rect(4, 0, 8, 2, s.hair); rect(4, 2, 1, 2, s.hair); rect(11, 2, 1, 2, s.hair);
+  rect(5, 4, 1, 1, "#ffffff"); rect(6, 4, 1, 1, s.eye);
+  rect(10, 4, 1, 1, "#ffffff"); rect(9, 4, 1, 1, s.eye);
+  rect(7, 6, 2, 1, "#9c6248");
+  // Торс и руки
+  rect(4, 8, 8, 8, s.shirt);
+  rect(1, 8, 3, 8, s.shirt); rect(1, 13, 3, 3, s.skin);
+  rect(12, 8, 3, 8, s.shirt); rect(12, 13, 3, 3, s.skin);
+  // Ноги и ботинки
+  rect(4, 16, 4, 8, s.pants); rect(8, 16, 4, 8, s.pants);
+  rect(4, 22, 4, 2, "#2a2a2e"); rect(8, 22, 4, 2, "#2a2a2e");
+}
 
 function buildTextureAtlas() {
   const canvas = document.createElement("canvas");
   canvas.width = ATLAS_COLS * TILE_PX;
-  canvas.height = ATLAS_COLS * TILE_PX;
+  canvas.height = ATLAS_ROWS * TILE_PX;
   const ctx = canvas.getContext("2d");
 
   function drawTile(idx, fn) {
@@ -73,89 +128,170 @@ function buildTextureAtlas() {
       d[o+2] = Math.max(0, Math.min(255, b));
       d[o+3] = a;
     };
-    const noise = (x, y, s) => (((x * 37 + y * 17 + s * 29) ^ (x * 13)) % 11) - 5;
-    fn(setPx, noise);
+    const h = (x, y, s) => {
+      let n = Math.imul(x * 374761393 + y * 668265263 + s * 1442695041, 1274126177);
+      return ((n ^ (n >>> 16)) >>> 0) % 256;
+    };
+    fn(setPx, h);
     ctx.putImageData(img, tx, ty);
   }
 
-  // 0: Grass Top
-  drawTile(0, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,1)*4; p(x,y, 76+k, 166+k, 68+k); } });
-  // 1: Grass Side
-  drawTile(1, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,2)*4; if (y < 4 + ((x*7)%3)) p(x,y, 74+k, 162+k, 66+k); else p(x,y, 126+k, 88+k, 58+k); } });
+  // 0: Grass Top (сочная классическая пиксельная трава)
+  drawTile(0, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,1)%28)-14; p(x,y, 92+k, 168+k, 58+k); } });
+  // 1: Grass Side (чёткий травяной край + земля с камешками)
+  drawTile(1, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,2)%24)-12; const edge=3+(h(x,0,9)%3); if (y<edge) p(x,y, 88+k, 162+k, 54+k); else if (y===edge) p(x,y, 64+k, 118+k, 38+k); else { const peb=h(x,y,5)>235; p(x,y, peb?136:134+k, peb?132:94+k, peb?126:62+k); } } });
   // 2: Dirt
-  drawTile(2, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,3)*5; p(x,y, 128+k, 90+k, 60+k); } });
-  // 3: Stone
-  drawTile(3, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,4)*4; p(x,y, 124+k, 128+k, 134+k); } });
-  // 4: Cobblestone
-  drawTile(4, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const seam=(y%4===0)||((x+(y>>2)*3)%6===0); const k=n(x,y,5)*4; const v=seam?74:116+k; p(x,y, v, v+2, v+5); } });
-  // 5: Log Top (rings)
-  drawTile(5, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const d=Math.hypot(x-7.5,y-7.5); if (d>6.8) p(x,y,88,62,40); else { const ring=Math.floor(d)%2===0?14:0; p(x,y,168-ring,132-ring,84-ring); } } });
-  // 6: Log Side (bark)
-  drawTile(6, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(x%3===0?-14:n(x,y,6)*3); p(x,y, 98+k, 70+k, 44+k); } });
-  // 7: Leaves
-  drawTile(7, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,7)*5; if ((x*11+y*7)%9===0) p(x,y, 32,74,34, 180); else p(x,y, 48+k, 132+k, 52+k, 245); } });
-  // 8: Planks
-  drawTile(8, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const seam=(y%4===0)||((x===0&&y<8)||(x===8&&y>=8)); const k=n(x,y,8)*3; if (seam) p(x,y,118,86,52); else p(x,y,176+k,138+k,88+k); } });
+  drawTile(2, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,3)%26)-13; const peb=h(x,y,4)>238; p(x,y, peb?142:134+k, peb?138:94+k, peb?132:62+k); } });
+  // 3: Stone (многослойная слоистая фактура камня)
+  drawTile(3, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const band=Math.floor(h(x>>1,y,7)/16)-8; const k=(h(x,y,8)%16)-8; const v=128+band+k; p(x,y, v, v, v+2); } });
+  // 4: Cobblestone (выпуклые булыжники со швами)
+  drawTile(4, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const gx=(x+(y>>2)*3)%5, gy=y%4; const seam=(gx===0||gy===0); const hi=(gx===1&&gy===1); const v=seam?68:(hi?156:116+((h(x,y,10)%20)-10)); p(x,y,v,v,v+2); } });
+  // 5: Log Top (годовые кольца)
+  drawTile(5, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const d=Math.hypot(x-7.5,y-7.5); if (d>6.7) p(x,y,92,66,40); else { const r=(Math.floor(d)%2===0)?16:-6; p(x,y, 174+r, 138+r, 88+r); } } });
+  // 6: Oak Bark (вертикальная кора)
+  drawTile(6, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const groove=(x%4===0)?-20:((x%4===2)?10:0); const k=(h(x,y,11)%16)-8; p(x,y, 102+groove+k, 76+groove+k, 46+groove+k); } });
+  // 7: Oak Leaves (пышная фактурная листва)
+  drawTile(7, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,12); if (r<38) p(x,y,24,62,22,0); else { const k=(r%32)-16; p(x,y, 58+k, 138+k, 46+k, 255); } } });
+  // 8: Oak Planks (4 аккуратных доски со стыками)
+  drawTile(8, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const seam=(y%4===0)||((y<4&&x===11)||(y>=4&&y<8&&x===4)||(y>=8&&y<12&&x===13)||(y>=12&&x===6)); const hi=(y%4===1); const k=(h(x,y,13)%14)-7; if (seam) p(x,y,108,82,46); else p(x,y, (hi?188:170)+k, (hi?152:134)+k, (hi?98:84)+k); } });
   // 9: Sand
-  drawTile(9, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,9)*3; p(x,y, 224+k, 210+k, 152+k); } });
-  // 10: Water
-  drawTile(10, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const w=Math.sin((x+y)*0.6)*10; p(x,y, 36, 128+w, 218+w, 185); } });
+  drawTile(9, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,14)%16)-8; p(x,y, 224+k, 212+k, 158+k); } });
+  // 10: Water (обновляется каждый кадр анимации!)
+  drawTile(10, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 38, 118, 224, 195); });
   // 11: Bedrock
-  drawTile(11, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=38+n(x,y,11)*6; p(x,y, v, v, v+4); } });
+  drawTile(11, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=30+(h(x,y,15)%65); p(x,y, v, v, v); } });
 
-  // 12..15: Ores (Coal, Iron, Gold, Diamond)
-  const oreCols = [[32,34,40], [214,186,158], [248,204,54], [68,236,248]];
-  oreCols.forEach((oc, idx) => {
-    drawTile(12 + idx, (p, n) => {
-      for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
-        const k=n(x,y,12+idx)*4;
-        const vein = ((x-3)*(x-3)+(y-4)*(y-4)<3) || ((x-11)*(x-11)+(y-5)*(y-5)<3) || ((x-6)*(x-6)+(y-11)*(y-11)<3) || ((x-12)*(x-12)+(y-12)*(y-12)<2.5);
-        if (vein) p(x,y, oc[0], oc[1], oc[2]);
-        else p(x,y, 122+k, 126+k, 132+k);
-      }
+  // 12..15: Coal, Iron, Gold, Diamond Ores (чёткие вкрапления с бликом)
+  const ores = [[[28,28,32],[54,54,60]], [[216,178,148],[242,216,192]], [[248,202,42],[255,244,140]], [[64,232,248],[180,252,255]]];
+  const spots = [[3,3],[4,3],[3,4],[11,4],[12,4],[11,5],[6,9],[7,9],[7,10],[12,11],[13,11],[2,12],[3,12]];
+  ores.forEach(([c1, c2], idx) => {
+    drawTile(12 + idx, (p, h) => {
+      for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=124+((h(x,y,20+idx)%18)-9); p(x,y,v,v,v+2); }
+      spots.forEach(([sx, sy], si) => { const c = si%3===0 ? c2 : c1; p(sx, sy, c[0], c[1], c[2]); });
     });
   });
 
   // 16: Glass
-  drawTile(16, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const glint=(x+y===6||x+y===7)&&x>2&&x<6; p(x,y, b?190:210, b?235:245, 255, b?215:(glint?180:65)); } });
+  drawTile(16, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const gl=(x===3&&y===3)||(x===4&&y===2)||(x===12&&y===12); p(x,y, b?192:225, b?235:248, 255, b?220:(gl?200:35)); } });
   // 17: Bricks
-  drawTile(17, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const mortar=(y%4===0)||((x+(y>>2)*4)%8===0); const k=n(x,y,17)*4; if (mortar) p(x,y,182,178,170); else p(x,y,162+k,74+k,58+k); } });
-  // 18: Workbench Top (3x3 grid!)
-  drawTile(18, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const grid=(x===5||x===10||y===5||y===10); p(x,y, b?94:(grid?72:168), b?66:(grid?48:124), b?38:(grid?28:74)); } });
+  drawTile(17, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const m=(y%4===0)||((x+(y>>2)*4)%8===0); const k=(h(x,y,25)%16)-8; if (m) p(x,y,192,188,180); else p(x,y,154+k,72+k,56+k); } });
+  // 18: Workbench Top
+  drawTile(18, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const g=(x===5||x===10||y===5||y===10); p(x,y, b?88:(g?66:174), b?58:(g?42:128), b?34:(g?24:76)); } });
   // 19: Workbench Side
-  drawTile(19, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===5); p(x,y, b?92:156, b?64:118, b?36:72); if (x>=4&&x<=6&&y>=8&&y<=13) p(x,y,180,188,198); } });
+  drawTile(19, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===4); p(x,y, b?88:162, b?58:122, b?34:72); if (x>=3&&x<=5&&y>=7&&y<=13) p(x,y,192,198,208); if (x>=9&&x<=12&&y>=8&&y<=11) p(x,y,192,198,208); } });
   // 20: Furnace Top
-  drawTile(20, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const v=b?68:106+n(x,y,20)*3; p(x,y, v, v, v+4); } });
-  // 21: Furnace Front (glowing hearth!)
-  drawTile(21, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (x>=4&&x<=11&&y>=8&&y<=13) p(x,y, 244, 138+(y*12)%60, 32); else if (x>=4&&x<=11&&y>=3&&y<=5) p(x,y, 34,36,42); else { const v=104+n(x,y,21)*3; p(x,y,v,v,v+4); } } });
+  drawTile(20, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); const v=b?74:118+((h(x,y,26)%14)-7); p(x,y,v,v,v); } });
+  // 21: Furnace Front
+  drawTile(21, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (x>=4&&x<=11&&y>=9&&y<=13) p(x,y, 248, 128+((x*19+y*23)%80), 28); else if (x>=3&&x<=12&&y>=3&&y<=6) p(x,y, 32,32,36); else { const v=116+((h(x,y,27)%16)-8); p(x,y,v,v,v); } } });
   // 22: Snow Top
-  drawTile(22, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=238+n(x,y,22)*2; p(x,y, v, v+4, 255); } });
+  drawTile(22, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=238+(h(x,y,28)%12); p(x,y,v,v,255); } });
   // 23: Snow Side
-  drawTile(23, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,23)*3; if (y<5) p(x,y,238,244,255); else p(x,y,126+k,88+k,58+k); } });
+  drawTile(23, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,29)%20)-10; if (y<4+(h(x,1,29)%3)) p(x,y,242,248,255); else p(x,y,134+k,94+k,62+k); } });
   // 24: Ice
-  drawTile(24, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,24)*3; p(x,y, 136+k, 204+k, 248, 200); } });
+  drawTile(24, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,30)%18)-9; p(x,y, 138+k, 198+k, 250, 210); } });
   // 25: Cactus Top
-  drawTile(25, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 48, 128, 52); });
+  drawTile(25, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 46, 124, 48); });
   // 26: Cactus Side
-  drawTile(26, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const rib=(x%4===0); p(x,y, rib?34:54, rib?104:146, rib?38:56); } });
+  drawTile(26, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const rib=(x%4===0); p(x,y, rib?32:54, rib?96:142, rib?34:54); } });
   // 27: Obsidian
-  drawTile(27, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=n(x,y,27)*4; p(x,y, 34+k, 22+k, 52+k); } });
-  // 28: Crystal Lamp
-  drawTile(28, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); p(x,y, b?58:215, b?82:252, b?94:235); } });
+  drawTile(27, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,31); p(x,y, r>220?82:24+(r%18), r>220?48:16+(r%12), r>220?128:42+(r%24)); } });
+  // 28: Glowstone
+  drawTile(28, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const r=h(x,y,32); if (r>180) p(x,y,255,244,174); else if (r>90) p(x,y,232,188,88); else p(x,y,154,108,46); } });
   // 29: Bookshelf
-  drawTile(29, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y<2||y>13||y===7||y===8) p(x,y,164,124,78); else { const bc=[[186,48,54],[52,126,196],[64,168,88],[212,172,54]][(x>>1)%4]; p(x,y,bc[0],bc[1],bc[2]); } } });
+  drawTile(29, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y<2||y>13||y===7||y===8) p(x,y,168,130,82); else { const bc=[[178,42,48],[46,114,192],[58,158,76],[218,174,48]][(x>>1)%4]; p(x,y,bc[0],bc[1],bc[2]); } } });
   // 30: Gravel
-  drawTile(30, (p, n) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=128+n(x,y,30)*8; p(x,y,v,v-2,v-4); } });
+  drawTile(30, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=112+(h(x,y,33)%42); p(x,y,v,v-2,v-4); } });
   // 31: TNT Top
-  drawTile(31, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 178, 48, 42); });
+  drawTile(31, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 186, 48, 42); });
   // 32: TNT Side
-  drawTile(32, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y>=5&&y<=10) p(x,y, 236, 234, 224); else p(x,y, 198, 46, 42); } });
+  drawTile(32, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { if (y>=5&&y<=10) p(x,y, 238, 234, 224); else p(x,y, (x%2===0?204:184), 46, 42); } });
+  // 33: Birch Bark (белая кора с чёрными полосками!)
+  drawTile(33, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const dash=(y%4===1&&x>=2&&x<=6)||(y%5===3&&x>=9&&x<=13); const v=224+((h(x,y,34)%18)-9); p(x,y, dash?46:v, dash?44:v, dash?42:v-4); } });
+  // 34: Sandstone
+  drawTile(34, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const band=(y<3)?14:((y===3)?-16:0); const k=(h(x,y,35)%14)-7; p(x,y, 224+band+k, 210+band+k, 162+band+k); } });
+  // 35: Lava (анимируется!)
+  drawTile(35, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 238, 92, 20); });
+  // 36: Netherrack (багровый адский камень!)
+  drawTile(36, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,36)%34)-17; p(x,y, 118+k, 46+(k>>1), 46+(k>>1)); } });
+  // 37: Soul Sand
+  drawTile(37, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,37)%24)-12; p(x,y, 82+k, 64+k, 52+k); } });
+  // 38: Nether Brick
+  drawTile(38, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const m=(y%4===0)||((x+(y>>2)*4)%8===0); const k=(h(x,y,38)%14)-7; if (m) p(x,y,28,16,20); else p(x,y, 58+k, 28+k, 34+k); } });
+  // 39: Quartz Ore (в адском камне!)
+  drawTile(39, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const k=(h(x,y,39)%28)-14; p(x,y,118+k,46+(k>>1),46+(k>>1)); } spots.forEach(([sx,sy])=>p(sx,sy,242,238,230)); });
+  // 40: Nether Portal (анимируется!)
+  drawTile(40, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) p(x,y, 148, 36, 232, 195); });
+  // 41: Chest Top
+  drawTile(41, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15); p(x,y, b?52:168, b?34:118, b?16:44); } });
+  // 42: Chest Front (с серебристым замком!)
+  drawTile(42, (p) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const b=(x===0||x===15||y===0||y===15||y===5); const lk=(x>=7&&x<=8&&y>=4&&y<=7); p(x,y, lk?210:(b?52:168), lk?214:(b?34:118), lk?220:(b?16:44)); } });
+  // 43: Emerald Ore
+  drawTile(43, (p, h) => { for (let y=0;y<16;y++) for (let x=0;x<16;x++) { const v=124+((h(x,y,43)%18)-9); p(x,y,v,v,v+2); } spots.forEach(([sx,sy],si)=>p(sx,sy,si%2?120:42,238,si%2?152:92)); });
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.flipY = false;
-  return { canvas, texture: tex };
+
+  // Анимация воды (тайл 10), лавы (тайл 35) и портала (тайл 40)!
+  let lastAnimStep = -1;
+  function updateAnimatedTextures(timeSec) {
+    const step = Math.floor(timeSec * 8);
+    if (step === lastAnimStep) return;
+    lastAnimStep = step;
+
+    // Вода (тайл 10)
+    drawTile(10, (p) => {
+      for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+        const w = Math.sin((x * 0.55) + (y * 0.35) + step * 0.55) * 18 + Math.cos((y * 0.65) - step * 0.4) * 12;
+        const crest = w > 20 ? 35 : 0;
+        p(x, y, 32 + crest, 114 + w + crest, 224 + (w * 0.5), 192);
+      }
+    });
+    // Лава (тайл 35)
+    drawTile(35, (p) => {
+      for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+        const w = Math.sin(x * 0.6 + step * 0.35) * Math.cos(y * 0.6 - step * 0.25);
+        const hot = w > 0.35;
+        p(x, y, hot ? 255 : 216, hot ? 188 : 74 + Math.floor((w + 1) * 35), hot ? 48 : 16, 255);
+      }
+    });
+    // Портал в Ад (тайл 40)
+    drawTile(40, (p) => {
+      for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+        const d = Math.hypot(x - 7.5, y - 7.5);
+        const swirl = Math.sin(d * 0.9 - step * 0.6 + Math.atan2(y - 7.5, x - 7.5) * 2);
+        p(x, y, 138 + swirl * 65, 28 + Math.max(0, swirl) * 55, 224 + swirl * 30, 200);
+      }
+    });
+    tex.needsUpdate = true;
+  }
+
+  let nextModTile = 44;
+  function registerAtlasTile(drawOrColor, forcedIdx = null) {
+    const idx = forcedIdx !== null ? forcedIdx : nextModTile++;
+    if (idx >= ATLAS_COLS * ATLAS_ROWS) return 3;
+    if (typeof drawOrColor === "function") {
+      drawTile(idx, drawOrColor);
+    } else {
+      const hex = String(drawOrColor || "#2ed573").replace("#", "");
+      const rr = parseInt(hex.slice(0, 2), 16) || 80;
+      const gg = parseInt(hex.slice(2, 4), 16) || 200;
+      const bb = parseInt(hex.slice(4, 6), 16) || 120;
+      drawTile(idx, (p, h) => {
+        for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+          const b = (x === 0 || x === 15 || y === 0 || y === 15);
+          const k = (h(x, y, idx + 7) % 24) - 12;
+          p(x, y, (b ? rr - 28 : rr) + k, (b ? gg - 28 : gg) + k, (b ? bb - 28 : bb) + k);
+        }
+      });
+    }
+    tex.needsUpdate = true;
+    return idx;
+  }
+
+  VH.registerAtlasTile = registerAtlasTile;
+  return { canvas, texture: tex, updateAnimatedTextures, registerAtlasTile };
 }
 
 function drawItemIcon(canvas, id) {
@@ -164,49 +300,46 @@ function drawItemIcon(canvas, id) {
   ctx.clearRect(0, 0, 16, 16);
   const info = ITEMS_DB[id];
   if (!info || !VH.atlasCanvas) return;
-
+  if (typeof info.drawIcon === 'function') { try { info.drawIcon(ctx); return; } catch {} }
   if (!info.item && info.faces) {
-    const f = info.faces[1]; // Side texture
-    const sx = (f % ATLAS_COLS) * TILE_PX;
-    const sy = Math.floor(f / ATLAS_COLS) * TILE_PX;
-    ctx.drawImage(VH.atlasCanvas, sx, sy, 16, 16, 1, 1, 14, 14);
+    const f = info.faces[1];
+    ctx.drawImage(VH.atlasCanvas, (f % ATLAS_COLS) * 16, Math.floor(f / ATLAS_COLS) * 16, 16, 16, 1, 1, 14, 14);
     ctx.strokeStyle = "rgba(0,0,0,0.45)";
     ctx.strokeRect(1, 1, 14, 14);
     return;
   }
-
-  ctx.fillStyle = info.color || "#ffffff";
+  ctx.fillStyle = info.color || "#fff";
   if (info.shape === "pick") {
-    ctx.fillRect(3, 2, 10, 3);
-    ctx.fillRect(2, 4, 2, 2); ctx.fillRect(12, 4, 2, 2);
-    ctx.fillStyle = "#8a5d32";
-    ctx.fillRect(7, 5, 2, 10);
+    ctx.fillRect(3, 2, 10, 3); ctx.fillRect(2, 4, 2, 2); ctx.fillRect(12, 4, 2, 2);
+    ctx.fillStyle = "#8a5d32"; ctx.fillRect(7, 5, 2, 10);
   } else if (info.shape === "axe") {
     ctx.fillRect(4, 2, 7, 5); ctx.fillRect(3, 4, 3, 4);
-    ctx.fillStyle = "#8a5d32";
-    ctx.fillRect(7, 5, 2, 10);
+    ctx.fillStyle = "#8a5d32"; ctx.fillRect(7, 5, 2, 10);
   } else if (info.shape === "sword") {
-    for (let i = 0; i < 9; i++) ctx.fillRect(12 - i, 2 + i, 2, 2);
-    ctx.fillStyle = "#8a5d32";
-    ctx.fillRect(2, 11, 4, 3);
-    ctx.fillStyle = "#e8c454";
-    ctx.fillRect(4, 9, 4, 2);
+    for (let i=0;i<9;i++) ctx.fillRect(12-i, 2+i, 2, 2);
+    ctx.fillStyle = "#8a5d32"; ctx.fillRect(2, 11, 4, 3);
+    ctx.fillStyle = "#e8c454"; ctx.fillRect(4, 9, 4, 2);
   } else if (info.shape === "stick") {
-    for (let i = 0; i < 10; i++) ctx.fillRect(3 + i, 12 - i, 2, 2);
+    for (let i=0;i<10;i++) ctx.fillRect(3+i, 12-i, 2, 2);
   } else if (info.shape === "ingot") {
-    ctx.fillRect(3, 6, 10, 5);
-    ctx.fillStyle = "rgba(255,255,255,0.45)";
-    ctx.fillRect(4, 6, 8, 2);
+    ctx.fillRect(3, 6, 10, 5); ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.fillRect(4, 6, 8, 2);
   } else if (info.shape === "gem") {
     ctx.fillRect(5, 3, 6, 10); ctx.fillRect(3, 5, 10, 6);
-    ctx.fillStyle = "rgba(255,255,255,0.4)";
-    ctx.fillRect(5, 4, 3, 3);
   } else if (info.shape === "food") {
     ctx.fillRect(4, 4, 8, 8); ctx.fillRect(3, 6, 10, 4);
+  } else if (info.shape === "flint") {
+    ctx.fillStyle = "#8892a0"; ctx.fillRect(3, 7, 5, 6);
+    ctx.fillStyle = "#ff9922"; ctx.fillRect(8, 3, 4, 6);
+  } else if (info.shape === "bucket") {
+    ctx.fillStyle = "#bcc4d0"; ctx.fillRect(3, 4, 10, 9);
+    ctx.fillStyle = info.color; ctx.fillRect(4, 5, 8, 4);
   }
 }
 
 VH.ITEMS_DB = ITEMS_DB;
+VH.SKINS_DB = SKINS_DB;
 VH.ATLAS_COLS = ATLAS_COLS;
+VH.ATLAS_ROWS = ATLAS_ROWS;
+VH.drawSkinPreview = drawSkinPreview;
 VH.buildTextureAtlas = buildTextureAtlas;
 VH.drawItemIcon = drawItemIcon;

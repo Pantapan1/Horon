@@ -1,32 +1,26 @@
 ====================================================
-  VOXELHORIZON v1.0 — ОРИГИНАЛЬНАЯ 3D ПЕСОЧНИЦА (APK)
+  VOXELHORIZON v2.1 — ПОЛНЫЙ MODDING ENGINE (APK)
   Плоский архив без папок — готов к сборке в GitHub!
 ====================================================
 
-КАК СОБРАТЬ APK В GITHUB ЗА 3 МИНУТЫ (БЕЗ ПАПОК):
-1. Создайте новый репозиторий на GitHub (например: VoxelHorizon).
-2. Загрузите ВСЕ файлы из этого архива прямо в корень репозитория:
-   index.html, style.css, textures.js, world.js, entities.js, game.js,
-   package.json, capacitor.config.json, README.txt
-3. Для автосборки APK на GitHub нажмите:
-   Add file -> Create new file -> введите путь:
-   .github/workflows/build-apk.yml
-   и вставьте туда содержимое файла build-apk.yml из этого архива -> Commit!
-4. Перейдите во вкладку «Actions» в вашем репозитории -> откройте запущенную
-   сборку «Build VoxelHorizon APK» -> через ~3 минуты внизу в разделе
-   «Artifacts» скачайте готовый файл VoxelHorizon-v1.0-APK (app-debug.apk)!
+КАК СОБРАТЬ APK В GITHUB:
+1. Загрузите все файлы из архива в корень репозитория:
+   index.html, style.css, textures.js, world.js, entities.js,
+   multiplayer_mods.js, game.js, package.json, capacitor.config.json, README.txt
+2. Создайте .github/workflows/build-apk.yml из файла build-apk.yml.
+3. Во вкладке Actions скачайте готовый app-debug.apk!
 
-ЧТО ВНУТРИ VOXELHORIZON v1.0:
-- 100% оригинальный код, текстуры и звуки (нет проблем с авторскими правами).
-- Бесконечный 3D воксельный мир на чанках (16x64x16) с отсечением скрытых граней.
-- 4 биома (Равнины, Лес, Пустыня, Снежная тайга), деревья, кактусы, пещеры, вода,
-  руды (Уголь, Железо, Золото, Алмазы).
-- Цикл дня и ночи (6 минут = сутки), освещение и туман.
-- Выживание и Творчество (с режимом полёта), ХП, Голод, урон от падения.
-- 26 блоков (включая Верстак, Печь, Стекло, Лампу, Обсидиан, TNT с взрывом!)
-  и 15 предметов (инструменты, мечи, слитки, еда).
-- Крафт, Переплавка в печи и полный Рюкзак.
-- 3D-мобы (Овцы, Свиньи и Ночные Сталкеры с ИИ и боёвкой).
-- Сохранение и загрузка нескольких миров прямо на устройстве.
-- Удобное мобильное сенсорное управление (джойстик, свайп камеры, кнопки
-  Ломать/Ставить/Прыжок/Полёт) + ПК-управление (WASD + мышь).
+ПОЛНЫЙ ДОСТУП ДЛЯ МОДОВ В v2.1 (VH.Mods + VH.Engine + THREE):
+Моды получают НЕОГРАНИЧЕННЫЙ доступ ко всей игре:
+- VH.Engine: прямой доступ к THREE, scene, camera, renderer, world, player,
+  mobMgr, mpMgr, physics (gravity, jumpVelocity, walkSpeed, timeScale),
+  ITEMS_DB, SKINS_DB, CRAFT_RECIPES, SMELT_RECIPES, setBlock, explodeAt и др.
+- VH.Mods.registerBlock(id, { name, color/draw, onStep, onInteract, onBreak, onPlace })
+- VH.Mods.registerItem(id, { name, color/drawIcon, dmg, onUse })
+- VH.Mods.registerMob(type, { hp, dmg, hostile, flying, buildMesh, onTick })
+- VH.Mods.registerDimension(id, { name, skyColor, fogColor, gravity, generateColumn })
+- VH.Mods.registerCommand(name, fn) / registerRecipe / registerSmelt
+- VH.Mods.ui.addHudButton / addHudWidget / showModal / closeModal
+- VH.Mods.on(event, fn): onInit, onWorldStart, onTick, onBlockBreak, onBlockPlace,
+  onBlockInteract, onItemUse, onMobSpawn, onPlayerHurt, onDimensionChange, onChat, onNetPacket
+- VH.Mods.storage.get / set (сохранение данных мода) + Импорт .js файлов с телефона!
