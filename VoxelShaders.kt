@@ -11,7 +11,11 @@ object VoxelShaders {
         attribute vec4 a_color;
 
         uniform mat4 u_projTrans;
+        #ifdef GL_ES
+        uniform mediump float u_time;
+        #else
         uniform float u_time;
+        #endif
         uniform vec3 u_camPos;
 
         varying vec2 v_texCoord;
@@ -68,7 +72,6 @@ object VoxelShaders {
             vec2 uv = v_texCoord;
             float flag = v_data.a;
 
-            // Animated UV scroll for water/lava
             vec4 texCol = texture2D(u_texture, uv);
             if (texCol.a < 0.25) discard;
 
