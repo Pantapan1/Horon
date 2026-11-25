@@ -43,6 +43,8 @@ class PlayerState {
     var warmBuffTimer = 0f
     var minerVisionTimer = 0f
     var speedBuffTimer = 0f
+    var strengthBuffTimer = 0f
+    var shieldBuffTimer = 0f
     var parryTimer = 0f
     var dashCooldown = 0f
     var foodCooldown = 0f
@@ -71,12 +73,17 @@ class PlayerState {
     val armor = IntArray(4) { 0 }
 
     fun hasWarmArmor(): Boolean = armor.any { BlockRegistry.items[it]?.warmArmor == true }
-    fun hasShield(): Boolean = offhand?.id == 132 || slots[selectedSlot]?.id == 132
+    fun hasShield(): Boolean = (offhand?.id ?: 0) in intArrayOf(132, 255) || (slots[selectedSlot]?.id ?: 0) in intArrayOf(132, 255)
+    fun hasMagnet(): Boolean = countItem(236) > 0
+    fun hasMinerHelmet(): Boolean = armor[0] == 237
+    fun hasSpeedBoots(): Boolean = armor[3] == 238
 
     fun getTotalArmor(): Int {
         var d = 0
         for (id in armor) d += BlockRegistry.items[id]?.armorDef ?: 0
         if (offhand?.id == 132) d += 4
+        if (offhand?.id == 255) d += 7
+        if (shieldBuffTimer > 0f) d += 6
         return d
     }
 
@@ -192,7 +199,7 @@ data class ProjectileIso(
     var x: Float, var y: Float, var z: Float,
     var vx: Float, var vy: Float,
     val dmg: Float, val fiery: Boolean, val frosty: Boolean, val fromPlayer: Boolean,
-    val isGrapple: Boolean = false, var life: Float = 2.4f
+    val isGrapple: Boolean = false, val isTeleportPearl: Boolean = false, var life: Float = 2.4f
 )
 
 data class ParticleIso(
@@ -318,10 +325,10 @@ class EntityAndWeatherManager {
         )
     }
 
-    fun fireProjectile(x: Float, y: Float, z: Float, dx: Float, dy: Float, dmg: Float, fiery: Boolean, frosty: Boolean, fromPlayer: Boolean, isGrapple: Boolean = false) {
+    fun fireProjectile(x: Float, y: Float, z: Float, dx: Float, dy: Float, dmg: Float, fiery: Boolean, frosty: Boolean, fromPlayer: Boolean, isGrapple: Boolean = false, isTeleportPearl: Boolean = false) {
         val len = max(0.01f, hypot(dx.toDouble(), dy.toDouble()).toFloat())
-        val spd = if (isGrapple) 18f else if (fromPlayer) 14f else 8.5f
-        projectiles.add(ProjectileIso(x, y, z + 0.5f, dx / len * spd, dy / len * spd, dmg, fiery, frosty, fromPlayer, isGrapple))
+        val spd = if (isGrapple || isTeleportPearl) 17f else if (fromPlayer) 14f else 8.5f
+        projectiles.add(ProjectileIso(x, y, z + 0.5f, dx / len * spd, dy / len * spd, dmg, fiery, frosty, fromPlayer, isGrapple, isTeleportPearl))
     }
 
     fun getActiveBoss(): MobEntity? = mobs.firstOrNull { it.isBoss }
@@ -514,7 +521,8 @@ class EntityAndWeatherManager {
             if (d.z < gz) { d.z = gz; d.vz = 0f; d.vx *= 0.8f; d.vy *= 0.8f }
             d.x += d.vx * dt; d.y += d.vy * dt
             val dist = hypot((player.x - d.x).toDouble(), (player.y - d.y).toDouble()).toFloat()
-            if (d.age > 0.45f && dist < 2.2f && abs(player.z - d.z) < 2.5f) {
+            val pickupRad = if (player.hasMagnet()) 5.8f else 2.2f
+            if (d.age > 0.45f && dist < pickupRad && abs(player.z - d.z) < 2.8f) {
                 d.x += (player.x - d.x) * min(1f, dt * 8f)
                 d.y += (player.y - d.y) * min(1f, dt * 8f)
                 if (dist < 0.75f) { onPickup(d.id, d.itemId, d.count); drops.remove(d) }
@@ -528,7 +536,12 @@ class EntityAndWeatherManager {
             val bx = floor(pr.x).toInt(); val by = floor(pr.y).toInt(); val bz = floor(pr.z).toInt()
             var hit = BlockRegistry.items[world.getBlock(bx, by, bz)]?.solid == true
             if (hit && pr.isGrapple) { onGrapplePull(pr.x, pr.y); projectiles.remove(pr); continue }
-            if (pr.fromPlayer && !pr.isGrapple) {
+            if (pr.isTeleportPearl && (hit || pr.life <= 0.1f)) {
+                val gz = world.getGroundZ(bx, by, pr.z)
+                if (gz != null) { player.x = bx + 0.5f; player.y = by + 0.5f; player.z = gz; spawnBlockParticles(bx, by, gz.toInt(), 0x24BAB2, 10); SoundFx.play("levelup", 0.55f) }
+                projectiles.remove(pr); continue
+            }
+            if (pr.fromPlayer && !pr.isGrapple && !pr.isTeleportPearl) {
                 for (m in mobs) {
                     if (abs(pr.z - m.z) < 2.0f && hypot((pr.x - m.x).toDouble(), (pr.y - m.y).toDouble()) < (if (m.isBoss) 1.4 else 0.8)) {
                         damageMob(m, pr.dmg, pr.vx * 0.08f, pr.vy * 0.08f, pr.frosty, onMobKill); hit = true; break

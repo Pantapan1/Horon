@@ -161,6 +161,53 @@ pub fn build_block_lut() -> [BlockMeta; 256] {
     set(73, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xD83848);
     set(74, true,  true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xB87E44);
 
+    // Redstone, Mechanisms & Crops (75..98)
+    set(75, true,  false, false, false, false, false, false, true,  52, 52, 110.0, 0xFF2838, 0xD81E2E); // Redstone Ore
+    set(76, true,  false, false, false, false, false, false, false, 53, 53, 180.0, 0xFF3444, 0xE62232); // Redstone Block
+    set(77, true,  false, false, false, false, false, false, false, 54, 54,   0.0, 0,        0x6E482E); // Redstone Lamp OFF
+    set(78, true,  false, false, false, false, false, false, false, 55, 55, 420.0, 0xFFE278, 0xFFD864); // Redstone Lamp ON
+    set(79, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x8A1822); // Redstone Wire OFF
+    set(80, false, true,  true,  false, false, false, false, false, -1, -1, 150.0, 0xFF3642, 0xFF3844); // Redstone Wire ON
+    set(81, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x848A96); // Lever OFF
+    set(82, false, true,  true,  false, false, false, false, false, -1, -1, 130.0, 0xFF3A44, 0xFF3A44); // Lever ON
+    set(83, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x9CA2B0); // Pressure Plate OFF
+    set(84, false, true,  true,  false, false, false, false, false, -1, -1, 120.0, 0xFF3A44, 0xFF424E); // Pressure Plate ON
+    set(85, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x9298A6); // Stone Button
+    set(86, false, true,  true,  false, false, false, false, false, -1, -1, 210.0, 0xFF3844, 0xFF3844); // Redstone Torch
+    set(87, false, true,  true,  false, false, false, false, false, -1, -1, 120.0, 0xFF3844, 0xB8323A); // Redstone Repeater
+    set(88, true,  false, false, false, false, false, false, false, 57, 56,   0.0, 0,        0x88909E); // Piston OFF
+    set(89, true,  true,  true,  false, false, false, false, false, -1, -1, 110.0, 0xFF444E, 0xB88248); // Piston ON
+    set(90, true,  false, false, false, false, false, false, false, 51, 58,   0.0, 0,        0x747A86); // Dispenser
+    set(91, true,  false, false, false, false, false, false, false, 59, 59,   0.0, 0,        0x845234); // Note Block
+    set(92, true,  false, false, false, false, false, false, false, 60, 60,   0.0, 0,        0x5A3A22); // Farmland
+    set(93, false, true,  false, false, false, false, false, false, 61, 61,   0.0, 0,        0xEE7E18); // Carrot Crop
+    set(94, false, true,  false, false, false, false, false, false, 62, 62,   0.0, 0,        0xD4A85C); // Potato Crop
+    set(95, false, true,  false, false, false, false, false, false, 63, 63,   0.0, 0,        0xE2242C); // Tomato Bush
+    set(96, false, true,  false, false, false, false, false, false, 64, 64,   0.0, 0,        0xF8CE30); // Corn Stalk
+    set(97, true,  false, false, false, false, false, false, false, 65, 65,   0.0, 0,        0x36A238); // Watermelon Block
+    set(98, false, true,  false, false, false, false, false, false, 66, 66,   0.0, 0,        0xEE2248); // Strawberry Patch
+
+    // Decor, Marble, Metals, Stained Glass & Planks (161..177)
+    set(161, true, false, false, false, false, false, false, false, 68, 68,   0.0, 0,        0xE8EAF2); // Marble
+    set(162, true, false, false, false, false, false, false, false, 69, 69,   0.0, 0,        0xF2F2F8); // Polished Marble
+    set(163, true, false, false, false, false, false, false, false, 70, 70,   0.0, 0,        0x5E8C56); // Mossy Stone Bricks
+    set(164, true, false, false, false, false, false, false, false, 71, 71,   0.0, 0,        0xD67242); // Copper Block
+    set(165, true, false, false, false, false, false, false, false, 72, 72,   0.0, 0,        0xF4C630); // Gold Block
+    set(166, true, false, false, false, false, false, false, false, 73, 73, 140.0, 0x4CEEFF, 0x4CEEFF); // Diamond Block
+    set(167, true, false, false, false, false, false, false, false, 74, 74,   0.0, 0,        0x341E54); // Obsidian Bricks
+    set(168, true, true,  false, false, false, false, false, false, 75, 75,   0.0, 0,        0x3892F6); // Blue Glass
+    set(169, true, true,  false, false, false, false, false, false, 76, 76,   0.0, 0,        0x30CE62); // Green Glass
+    set(170, true, true,  false, false, false, false, false, false, 77, 77,   0.0, 0,        0xF8BA30); // Amber Glass
+    set(171, true, false, false, false, false, false, false, false, 67, 67,   0.0, 0,        0xDAC038); // Hay Bale
+    set(172, true, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xBAC4D4); // Iron Door Closed
+    set(173, false,true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xBAC4D4); // Iron Door Open
+    set(174, true, false, false, false, false, false, false, false, 78, 78,   0.0, 0,        0x664632); // Dark Oak Planks
+    set(175, true, false, false, false, false, false, false, false, 79, 79,   0.0, 0,        0xE4D8B4); // Birch Planks
+    set(176, true, false, false, false, false, false, false, false, 80, 80,   0.0, 0,        0xE89AB2); // Sakura Planks
+    set(177, true, false, false, false, false, false, false, true,  82, 82,   0.0, 0,        0xE29828); // Nether Gold Ore
+    set(178, true, false, false, false, false, false, false, false, 81, 81,   0.0, 0,        0xDEC88C); // Carved Sandstone
+    set(179, true, false, false, false, false, false, false, false, 83, 83, 320.0, 0x38E2EE, 0x38E2EE); // Glow Crystal Block
+
     lut
 }
 
@@ -308,7 +355,9 @@ impl RustWorld {
                             31
                         } else if r > 0.96 {
                             23
-                        } else if r > 0.90 {
+                        } else if r > 0.92 {
+                            177 // Nether Gold Ore!
+                        } else if r > 0.88 {
                             33
                         } else {
                             30
@@ -429,12 +478,18 @@ impl RustWorld {
                                 if ((wx + z as i32) & 1) == 0 { 49 } else { 50 }
                             } else if is_deep && r > 0.960 {
                                 13
-                            } else if is_deep && r > 0.935 {
+                            } else if is_deep && r > 0.946 {
+                                75 // Redstone Ore!
+                            } else if is_deep && r > 0.922 {
                                 12
                             } else if is_deep {
                                 40
+                            } else if z < 72 && r > 0.968 {
+                                75 // Mid-depth Redstone Ore!
                             } else if z < 95 && r > 0.978 {
                                 13
+                            } else if z > 105 && r > 0.958 {
+                                161 // Marble veins!
                             } else if r > 0.952 {
                                 12
                             } else if r > 0.928 {
@@ -535,8 +590,12 @@ impl RustWorld {
                             data[cidx(lx, ly, top_z + 1)] = 67;
                         } else if (0.925..=0.935).contains(&r) {
                             data[cidx(lx, ly, top_z + 1)] = 68;
-                        } else if (0.918..=0.922).contains(&r) {
+                        } else if (0.916..=0.922).contains(&r) {
                             data[cidx(lx, ly, top_z + 1)] = 53;
+                        } else if (0.906..=0.915).contains(&r) {
+                            // Wild discoverable crops: Carrots, Potatoes, Tomatoes, Corn, Watermelons, Strawberries!
+                            let crop_pick = ((wx.wrapping_mul(13) ^ wy.wrapping_mul(31)).rem_euclid(6)) as u8;
+                            data[cidx(lx, ly, top_z + 1)] = 93 + crop_pick;
                         }
                     }
                 }

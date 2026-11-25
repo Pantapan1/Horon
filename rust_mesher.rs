@@ -1,9 +1,9 @@
 use crate::world::{chunk_coord, cidx, IsoChunk, RustWorld, MAX_Z_I32, TH, TW, ZH};
 
-const ATLAS_COLS: f32 = 8.0;
+const ATLAS_COLS: f32 = 16.0;
 const ATLAS_ROWS: f32 = 8.0;
 const UV_EPS: f32 = 0.0015;
-const WHITE_TILE_IDX: i16 = 63; // Dedicated solid white 64x64 tile in atlas slot 63 -> ZERO texture switches!
+const WHITE_TILE_IDX: i16 = 127; // Dedicated solid white 64x64 tile in atlas slot 63 -> ZERO texture switches!
 
 #[inline(always)]
 pub fn pack_color(r: f32, g: f32, b: f32, a: f32) -> f32 {
@@ -17,8 +17,8 @@ pub fn pack_color(r: f32, g: f32, b: f32, a: f32) -> f32 {
 
 #[inline(always)]
 fn tile_uv(tid: i16) -> (f32, f32, f32, f32) {
-    let col = (tid % 8) as f32;
-    let row = (tid / 8) as f32;
+    let col = (tid % 16) as f32;
+    let row = (tid / 16) as f32;
     let su = 1.0 / ATLAS_COLS;
     let sv = 1.0 / ATLAS_ROWS;
     (

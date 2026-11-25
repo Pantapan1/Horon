@@ -105,7 +105,7 @@ object SpriteArt {
         propsTex = Texture(Gdx.files.internal("sprites_props.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
         }
-        props = Array(27) { i -> TextureRegion(propsTex, (i % 8) * 64, (i / 8) * 64, 64, 64) }
+        props = Array(43) { i -> TextureRegion(propsTex, (i % 8) * 64, (i / 8) * 64, 64, 64) }
         BlockRegistry.attachPropIcons(propsTex)
     }
 

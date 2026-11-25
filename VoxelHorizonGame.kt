@@ -46,6 +46,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     lateinit var luaMods: LuaModEngine
     lateinit var netMp: NetMultiplayer
     lateinit var profiles: ProfileManager
+    val redstone = RedstoneSystem()
     val player = PlayerState()
 
     private lateinit var camWorld: OrthographicCamera
@@ -101,7 +102,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private var autoAttackCd = 0f
     var baseWalkSpeed = 5.0f
     var cameraZoom = 0.85f
-    var worldFileName = "world_iso_v64.vhworld"
+    var worldFileName = "world_iso_v65.vhworld"
 
     // Стройка и копка v6.3: режим (0=ПОЛ, 1=СТЕНА, 2=КРЫША), свайп-стройка, быстрый откат!
     private var buildMode = 1 // 0=ПОЛ, 1=СТЕНА, 2=КРЫША
@@ -132,6 +133,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private val decayingLeaves = mutableListOf<LeafDecayEntry>()
     private var wbSelectedIdx = 0
     private var wbPage = 0
+    private var wbCat = 0 // 0=Все, 1=Инстр., 2=Стройка, 3=Редстоун, 4=Еда
+    private var campfirePage = 0
     var currentWorldTitle = "Мой мир"
 
     // Minimap (32x32 native Rust radar, updated every 0.45s -> 0 FPS impact!)
@@ -448,6 +451,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         } catch (_: Exception) {}
     }
 
+    fun triggerTntAt(cx: Int, cy: Int, cz: Int) = explodeAt(cx, cy, cz, 2.8f)
+
     private fun explodeAt(cx: Int, cy: Int, cz: Int, rad: Float) {
         shakeTimer = 0.35f
         val r = rad.toInt() + 1
@@ -519,6 +524,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             "zombie" -> { dropsToSpawn += 101 to 1; if (Random.nextFloat() < 0.15f) dropsToSpawn += 102 to 1 }
             else -> dropsToSpawn += 101 to 1
         }
+        if (player.slots[player.selectedSlot]?.id == 254 && Random.nextFloat() < 0.35f) dropsToSpawn += 118 to 1
         for ((dId, dCnt) in dropsToSpawn) {
             entities.spawnDrop(dId, dCnt, dead.x + (Random.nextFloat() - 0.5f) * 0.4f, dead.y + (Random.nextFloat() - 0.5f) * 0.4f, dead.z)
         }
@@ -625,6 +631,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         "anvil" -> "НАКОВАЛЬНЯ"
         "waystone" -> "ТЕЛЕПОРТ"
         "elevator" -> "ЛИФТ ВВЕРХ/ВНИЗ"
+        "lever" -> "ПЕРЕКЛЮЧИТЬ РЫЧАГ"
+        "button" -> "НАЖАТЬ КНОПКУ"
+        "noteblock" -> "ИГРАТЬ НОТУ"
+        "iron_door" -> "ЖЕЛЕЗНАЯ ДВЕРЬ"
         "door" -> if (id == 57) "ОТКРЫТЬ ДВЕРЬ" else "ЗАКРЫТЬ ДВЕРЬ"
         "sign" -> "ТАБЛИЧКА"
         "altar" -> "АЛТАРЬ БОССА"
@@ -680,7 +690,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         entities.slashes.add(SlashArc(player.x + player.aimGx * 0.65f, player.y + player.aimGy * 0.65f, player.z + 0.5f, player.attackAngleDeg, hDef?.colorHex ?: 0xFFFFFF))
         val critChance = profiles.active.combatLevel() * 0.03f
         val isCrit = Random.nextFloat() < critChance
-        val dmg = (((hDef?.damage ?: 4) + (if (isFlint) 5 else player.weaponUpgradeLvl * 2)) * (if (isCrit) 1.5f else 1f)).toFloat()
+        val strMult = if (player.strengthBuffTimer > 0f) 1.5f else 1f
+        val dmg = (((hDef?.damage ?: 4) + (if (isFlint) 5 else player.weaponUpgradeLvl * 2)) * (if (isCrit) 1.5f else 1f) * strMult).toFloat()
         SoundFx.play("hit", 0.55f)
         val isGuest = netMp.isConnected && !netMp.isHost
 
@@ -729,7 +740,64 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             133 -> if (player.takeItem(133, 1)) { player.maxHp += 4f; player.hp = player.maxHp; showToast("Сердце Леса: Макс. HP ${player.maxHp.toInt()}!"); return true }
             136 -> if (player.takeItem(136, 1)) { player.bodyTemp = 100f; player.warmBuffTimer = 90f; player.food = min(player.maxFood, player.food + 4f); player.hp = min(player.maxHp, player.hp + 4f); showToast("Согревающий чай (90с тепла)!"); return true }
             137 -> if (player.takeItem(137, 1)) { player.minerVisionTimer = 45f; showToast("Отвар Шахтёра: руды подсвечены на 45с!"); return true }
-            138 -> if (player.takeItem(138, 1)) { player.speedBuffTimer = 45f; showToast("Эликсир Скорости (+45% бег)!"); return true }
+            138 -> if (player.takeItem(138, 1)) { player.speedBuffTimer = 45f; SoundFx.play("pickup", 0.6f); showToast("Эликсир Скорости (+45% бег)!"); return true }
+            241 -> if (player.hp < player.maxHp && player.takeItem(241, 1)) {
+                player.hp = min(player.maxHp, player.hp + 6f); SoundFx.play("pickup", 0.6f)
+                entities.floatingTexts.add(FloatingText(player.x, player.y, player.z + 1.5f, "+6 HP", Color.GREEN))
+                showToast("Бинт: +6 HP мгновенно!"); return true
+            }
+            242 -> if (player.takeItem(242, 1)) {
+                player.hp = min(player.maxHp, player.hp + 14f); SoundFx.play("levelup", 0.6f)
+                entities.floatingTexts.add(FloatingText(player.x, player.y, player.z + 1.5f, "+14 HP", Color.GREEN))
+                showToast("Мега-зелье: +14 HP!"); return true
+            }
+            243 -> if (player.takeItem(243, 1)) { player.strengthBuffTimer = 60f; SoundFx.play("levelup", 0.6f); showToast("Эликсир Силы: +50% к урону на 60с!"); return true }
+            244 -> if (player.takeItem(244, 1)) { player.shieldBuffTimer = 60f; SoundFx.play("levelup", 0.6f); showToast("Зелье Щита: +6 к броне на 60с!"); return true }
+            213 -> if (player.takeItem(213, 1)) {
+                player.food = min(player.maxFood, player.food + 10f); player.hp = min(player.maxHp, player.hp + 8f)
+                player.minerVisionTimer = 60f; SoundFx.play("levelup", 0.6f); showToast("Золотая морковь: +8 HP и Зрение руд (60с)!"); return true
+            }
+            214 -> if (player.takeItem(214, 1)) {
+                player.food = player.maxFood; player.hp = player.maxHp; player.shieldBuffTimer = 60f; player.warmBuffTimer = 60f
+                SoundFx.play("levelup", 0.7f); showToast("Золотое яблоко: Полное исцеление + Защита!"); return true
+            }
+            220 -> if (player.takeItem(220, 1)) {
+                player.food = min(player.maxFood, player.food + 8f); player.hp = min(player.maxHp, player.hp + 6f)
+                player.bodyTemp = 95f; SoundFx.play("pickup", 0.6f); showToast("Баночка мёда: тепло и +6 HP!"); return true
+            }
+            223, 251 -> if (player.takeItem(held.id, 1)) {
+                player.food = min(player.maxFood, player.food + hDef.healFood); player.hp = min(player.maxHp, player.hp + hDef.healHp)
+                player.speedBuffTimer = max(player.speedBuffTimer, 20f); SoundFx.play("pickup", 0.6f); showToast("${hDef.name}: заряд бодрости!"); return true
+            }
+            234 -> if (player.takeItem(234, 1)) { // Дымовая бомба: оглушает врагов вокруг и даёт рывок!
+                val pxI = floor(player.x).toInt(); val pyI = floor(player.y).toInt(); val pzI = floor(player.z).toInt()
+                entities.spawnBlockParticles(pxI, pyI, pzI, 0x9098A8, 16)
+                for (m in entities.mobs) if (m.hostile && hypot((m.x - player.x).toDouble(), (m.y - player.y).toDouble()) < 5.5) m.stunTimer = 3.5f
+                player.speedBuffTimer = max(player.speedBuffTimer, 10f); SoundFx.play("splash", 0.65f); showToast("Дымовая бомба: враги ослеплены!"); return true
+            }
+            249 -> if (player.takeItem(249, 1)) { // Свиток Дома: телепорт на базу из любой глубины!
+                if (world.dimension != player.spawnDim) switchDimension(player.spawnDim)
+                player.x = player.spawnX; player.y = player.spawnY; player.z = player.spawnZ
+                camWorld.position.set(isoToScreenX(player.x, player.y), isoToScreenY(player.x, player.y, player.z), 0f)
+                SoundFx.play("levelup", 0.75f); showToast("Свиток Дома: вы вернулись на базу!"); return true
+            }
+            245 -> { // Компас: направление к базе / метке!
+                val tx = customMarkerX?.toFloat() ?: player.spawnX; val ty = customMarkerY?.toFloat() ?: player.spawnY
+                val dist = hypot((tx - player.x).toDouble(), (ty - player.y).toDouble()).toInt()
+                showToast("Компас -> Цель (${tx.toInt()}, ${ty.toInt()}): $dist блоков")
+                return true
+            }
+            246 -> { // Подзорная труба: переключает дальний тактический обзор!
+                cameraZoom = if (cameraZoom > 1.25f) 0.75f else 1.45f
+                showToast(if (cameraZoom > 1.25f) "Подзорная труба: Обзор 1.45x" else "Подзорная труба: Обычный обзор")
+                return true
+            }
+            250 -> { // Часы Редстоуна: точное время + импульс редстоуна вокруг!
+                val h = ((entities.worldTime * 24f + 6f) % 24f).toInt(); val mn = (((entities.worldTime * 24f + 6f) % 1f) * 60f).toInt()
+                redstone.pressButton(floor(player.x).toInt(), floor(player.y).toInt(), floor(player.z).toInt(), world)
+                showToast("Часы: %02d:%02d | День ${entities.dayCount} (${entities.season.ruName})".format(h, mn))
+                return true
+            }
         }
         if (hDef.healFood > 0 && !player.creative && (player.food < player.maxFood || player.hp < player.maxHp)) {
             if (player.foodCooldown > 0f) {
@@ -764,11 +832,40 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             entities.fireProjectile(player.x, player.y, player.z, dx, dy, 4f, false, false, true, isGrapple = true)
             return
         }
-        if (hDef?.weaponStyle == "bow") {
-            if (player.creative || player.takeItem(124, 1)) {
-                entities.fireProjectile(player.x, player.y, player.z, dx, dy, hDef.damage.toFloat(), false, false, true)
-            } else showToast("Нет стрел!")
-            return
+        when (hDef?.weaponStyle) {
+            "bow" -> {
+                if (player.creative || player.takeItem(124, 1)) {
+                    entities.fireProjectile(player.x, player.y, player.z, dx, dy, (hDef.damage + player.weaponUpgradeLvl * 2).toFloat(), false, false, true)
+                    SoundFx.play("hit", 0.5f)
+                } else showToast("Нет стрел!")
+                return
+            }
+            "staff_amethyst" -> {
+                entities.fireProjectile(player.x, player.y, player.z, dx, dy, (hDef.damage + player.weaponUpgradeLvl * 2).toFloat(), false, true, true)
+                SoundFx.play("levelup", 0.4f); return
+            }
+            "staff_fire" -> {
+                entities.fireProjectile(player.x, player.y, player.z, dx, dy, (hDef.damage + player.weaponUpgradeLvl * 2).toFloat(), true, false, true)
+                SoundFx.play("boss", 0.35f); return
+            }
+            "boomerang" -> {
+                entities.fireProjectile(player.x, player.y, player.z, dx, dy, (hDef.damage + player.weaponUpgradeLvl * 2).toFloat(), false, false, true)
+                SoundFx.play("hit", 0.5f); return
+            }
+            "shuriken" -> {
+                if (player.creative || player.takeItem(233, 1)) {
+                    entities.fireProjectile(player.x, player.y, player.z, dx, dy, (hDef.damage + player.weaponUpgradeLvl * 2).toFloat(), false, false, true)
+                    SoundFx.play("hit", 0.45f)
+                }
+                return
+            }
+            "pearl" -> {
+                if (player.creative || player.takeItem(235, 1)) {
+                    entities.fireProjectile(player.x, player.y, player.z, dx, dy, 2f, false, false, true, isTeleportPearl = true)
+                    SoundFx.play("splash", 0.5f)
+                }
+                return
+            }
         }
 
         // Дуга взмаха оружием/инструментом!
@@ -782,7 +879,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val reach = if (isHammer) 2.9f else 2.5f
         val critChance = profiles.active.combatLevel() * 0.03f
         val isCrit = Random.nextFloat() < critChance
-        val dmg = (((hDef?.damage ?: 4) + (if (isFlint) 5 else player.weaponUpgradeLvl * 2)) * (if (isCrit) 1.5f else 1f)).toFloat()
+        val strMult = if (player.strengthBuffTimer > 0f) 1.5f else 1f
+        val dmg = (((hDef?.damage ?: 4) + (if (isFlint) 5 else player.weaponUpgradeLvl * 2)) * (if (isCrit) 1.5f else 1f) * strMult).toFloat()
         SoundFx.play("hit", 0.55f)
         var hitMob = false
         val isGuest = netMp.isConnected && !netMp.isHost
@@ -893,6 +991,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 }
                 "portal" -> { switchDimension(if (world.dimension == "nether") "overworld" else "nether"); return }
                 "tnt" -> { explodeAt(pick.gx, pick.gy, pick.gz, 2.8f); return }
+                "lever" -> { redstone.toggleLever(pick.gx, pick.gy, pick.gz, this); return }
+                "button" -> { redstone.pressButton(pick.gx, pick.gy, pick.gz, world); showToast("Кнопка: импульс Редстоуна (2.5с)!"); return }
+                "noteblock" -> { redstone.playNoteBlock(pick.gx, pick.gy, pick.gz, entities); return }
+                "iron_door" -> { showToast("Железную дверь открывает Редстоун (Рычаг / Плита / Кнопка)!"); return }
             }
         }
 
@@ -954,13 +1056,62 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     }
                 }
                 143 -> { // Посадка Пшеницы на Дёрн/Землю!
-                    if (pick.id in intArrayOf(1, 2, 42) && world.getBlock(pick.gx, pick.gy, pick.gz + 1) == 0) {
+                    if (pick.id in intArrayOf(1, 2, 42, 92) && world.getBlock(pick.gx, pick.gy, pick.gz + 1) == 0) {
                         if (player.takeItem(143, 1)) { setWorldBlock(pick.gx, pick.gy, pick.gz + 1, 54); showToast("Пшеница посажена!"); return }
                     }
                 }
-                144 -> { // Посадка Ягодного куста на Дёрн/Землю (если не едим)!
-                    if (pick.id in intArrayOf(1, 2) && world.getBlock(pick.gx, pick.gy, pick.gz + 1) == 0 && player.food >= 18f) {
+                144 -> {
+                    if (pick.id in intArrayOf(1, 2, 92) && world.getBlock(pick.gx, pick.gy, pick.gz + 1) == 0 && player.food >= 18f) {
                         if (player.takeItem(144, 1)) { setWorldBlock(pick.gx, pick.gy, pick.gz + 1, 67); showToast("Ягодный куст посажен!"); return }
+                    }
+                }
+                201 -> { // Пыль Редстоуна -> кладёт Провод Редстоуна (79)!
+                    val tz = if (pick.id == 0) pick.gz else pick.gz + 1
+                    if (tz in 1 until WorldIso.MAX_Z && world.getBlock(pick.gx, pick.gy, tz) == 0 && player.takeItem(201, 1)) {
+                        setWorldBlock(pick.gx, pick.gy, tz, 79)
+                        SoundFx.play("mine", 0.45f)
+                        redstone.evaluateAround(pick.gx, pick.gy, tz, world, this, player, entities, null)
+                        return
+                    }
+                }
+                202 -> { // Гаечный ключ: проверяет сигнал Редстоуна и активирует механизмы!
+                    val pwr = redstone.isPowered(pick.gx, pick.gy, pick.gz)
+                    if (pick.id == 81 || pick.id == 82) redstone.toggleLever(pick.gx, pick.gy, pick.gz, this)
+                    else showToast("Ключ: блок ${BlockRegistry.items[pick.id]?.name ?: ""} | Сигнал: ${if (pwr) "АКТИВЕН" else "НЕТ"}")
+                    return
+                }
+                203 -> { // Железная мотыга: вспахивает Дёрн/Землю в влажную Пашню (92)!
+                    if (pick.id in intArrayOf(1, 2, 42)) {
+                        setWorldBlock(pick.gx, pick.gy, pick.gz, 92)
+                        entities.spawnBlockParticles(pick.gx, pick.gy, pick.gz, 0x5A3A22, 6)
+                        SoundFx.play("mine", 0.5f); showToast("Вспахана грядка (Пашня)!"); return
+                    }
+                }
+                204, 247 -> { // Лейка или Удобрение: мгновенно ускоряет рост грядок и цветов вокруг!
+                    if (held.id == 247 && !player.takeItem(247, 1)) return
+                    var grew = 0
+                    for (dx in -2..2) for (dy in -2..2) {
+                        val gx2 = pick.gx + dx; val gy2 = pick.gy + dy
+                        val ground = world.getBlock(gx2, gy2, pick.gz)
+                        val abv = world.getBlock(gx2, gy2, pick.gz + 1)
+                        if (abv in intArrayOf(54, 67, 93, 94, 95, 96, 98)) {
+                            entities.spawnRisingSpark(gx2 + 0.5f, gy2 + 0.5f, pick.gz + 1.2f, 0x48EE78, 6f)
+                            val dropId = BlockRegistry.items[abv]?.dropId ?: 0
+                            if (dropId > 0) { entities.spawnDrop(dropId, 1, gx2 + 0.5f, gy2 + 0.5f, (pick.gz + 1).toFloat()); grew++ }
+                        } else if (ground == 1 && abv == 0 && Random.nextFloat() < 0.25f) {
+                            setWorldBlock(gx2, gy2, pick.gz + 1, 68); grew++
+                        }
+                    }
+                    SoundFx.play("splash", 0.6f); showToast(if (grew > 0) "Урожай вырос! (+$grew)" else "Полито водой!")
+                    return
+                }
+                205, 206, 208, 209, 211, 212 -> { // Посадка Моркови, Картошки, Томата, Кукурузы, Арбуза и Клубники на Пашню/Землю!
+                    if (pick.id in intArrayOf(92, 1, 2) && world.getBlock(pick.gx, pick.gy, pick.gz + 1) == 0) {
+                        val cropBlock = when (held.id) { 205 -> 93; 206 -> 94; 208 -> 95; 209 -> 96; 211 -> 97; else -> 98 }
+                        if (player.takeItem(held.id, 1)) {
+                            setWorldBlock(pick.gx, pick.gy, pick.gz + 1, cropBlock)
+                            SoundFx.play("mine", 0.4f); showToast("Посажено: ${BlockRegistry.items[cropBlock]?.name}!"); return
+                        }
                     }
                 }
             }
@@ -1205,6 +1356,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         if (player.warmBuffTimer > 0f) player.warmBuffTimer = max(0f, player.warmBuffTimer - dt)
         if (player.minerVisionTimer > 0f) player.minerVisionTimer = max(0f, player.minerVisionTimer - dt)
         if (player.speedBuffTimer > 0f) player.speedBuffTimer = max(0f, player.speedBuffTimer - dt)
+        if (player.strengthBuffTimer > 0f) player.strengthBuffTimer = max(0f, player.strengthBuffTimer - dt)
+        if (player.shieldBuffTimer > 0f) player.shieldBuffTimer = max(0f, player.shieldBuffTimer - dt)
         if (player.parryTimer > 0f) player.parryTimer = max(0f, player.parryTimer - dt)
         if (player.hurtFlash > 0f) player.hurtFlash = max(0f, player.hurtFlash - dt)
         if (player.hurtSquash > 0f) player.hurtSquash = max(0f, player.hurtSquash - dt * 5f)
@@ -1290,7 +1443,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             if (BlockRegistry.items[world.getBlock(pxI, pyI, floor(nz).toInt())]?.solid != true) player.z = nz
         }
 
-        val speedBuff = if (player.speedBuffTimer > 0f) 1.45f else 1.0f
+        val speedBuff = (if (player.speedBuffTimer > 0f) 1.45f else 1.0f) * (if (player.hasSpeedBoots()) 1.20f else 1.0f)
         val inDeepDark = isCutawayActive && player.z < WorldIso.SEA_Z - 4 && (BlockRegistry.items[player.slots[player.selectedSlot]?.id ?: 0]?.lightRadius ?: 0f) <= 0f && (BlockRegistry.items[player.offhand?.id ?: 0]?.lightRadius ?: 0f) <= 0f
         val darkMult = if (inDeepDark) 0.85f else 1.0f
         val spd = baseWalkSpeed * speedBuff * darkMult * min(1f, inLen) * (if (inWater) 0.58f else if (inLen > 0.85f) 1.32f else 1.0f)
@@ -1336,6 +1489,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         if (world.worldActive && screen !in setOf(UiScreen.MAIN_MENU, UiScreen.WORLD_SLOTS, UiScreen.PAUSE, UiScreen.DEATH)) {
             updateFurnaces(dt)
             updateDecayingLeaves(dt)
+            redstone.update(dt, this)
         }
 
         if (screen == UiScreen.PLAYING) {
@@ -1553,7 +1707,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val def = BlockRegistry.items[bId]
                 val pIdx = when (bId) {
                     35 -> if (openChestPos?.first == gx && openChestPos?.second == gy && openChestPos?.third == gz) 3 else 2
-                    37 -> animFrame; 34 -> 5 + animFrame; 59 -> 11 + animFrame
+                    37 -> animFrame; 34 -> 5 + animFrame; 59 -> 11 + animFrame; 80 -> 28 + animFrame; 86 -> 36 + animFrame; 85 -> if (redstone.isButtonActive(gx, gy, gz)) 35 else 34; 87 -> if (redstone.isPowered(gx, gy, gz)) 39 else 38
                     else -> def?.propIdx ?: -1
                 }
                 if (pIdx in SpriteArt.props.indices) {
@@ -1630,10 +1784,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 }
                 val mDef = held?.let { BlockRegistry.items[it.id] }
                 val oDef = player.offhand?.let { BlockRegistry.items[it.id] }
-                val lRad = max(mDef?.lightRadius ?: 0f, oDef?.lightRadius ?: 0f)
+                val helmLight = if (player.hasMinerHelmet()) 310f else 0f
+                val lRad = max(helmLight, max(mDef?.lightRadius ?: 0f, oDef?.lightRadius ?: 0f))
                 if (lRad > 0f) {
                     handLightX = hx; handLightY = hy + 24f; handLightRad = lRad * 1.15f
-                    handLightCol = if ((mDef?.lightRadius ?: 0f) > 0f) mDef!!.lightColor else oDef!!.lightColor
+                    handLightCol = if ((mDef?.lightRadius ?: 0f) > 0f) mDef!!.lightColor else if ((oDef?.lightRadius ?: 0f) > 0f) oDef!!.lightColor else 0xFFF29C
                 }
             }
         }
@@ -1896,11 +2051,26 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         spriteBatch.end()
     }
 
-    private fun drawCenteredText(f: BitmapFont, text: String, x: Float, y: Float, w: Float, h: Float) {
+    // Автоподгонка размера шрифта — текст НИКОГДА не вылезет за края кнопки или окна!
+    private fun drawFitTextBatch(f: BitmapFont, text: String, x: Float, y: Float, maxW: Float, h: Float, centered: Boolean) {
+        if (text.isEmpty() || maxW <= 8f) return
+        val oldSx = f.data.scaleX; val oldSy = f.data.scaleY
         glyphLayout.setText(f, text)
+        if (glyphLayout.width > maxW) {
+            val ratio = (maxW / glyphLayout.width).coerceAtLeast(0.48f)
+            f.data.setScale(oldSx * ratio, oldSy * ratio)
+            glyphLayout.setText(f, text)
+        }
+        val tx = if (centered) x + (maxW - glyphLayout.width) * 0.5f else x
+        val ty = y + (h + glyphLayout.height) * 0.5f
+        f.draw(spriteBatch, glyphLayout, tx, ty)
+        if (f.data.scaleX != oldSx) f.data.setScale(oldSx, oldSy)
+    }
+
+    private fun drawCenteredText(f: BitmapFont, text: String, x: Float, y: Float, w: Float, h: Float) {
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        f.draw(spriteBatch, glyphLayout, x + (w - glyphLayout.width) / 2f, y + (h + glyphLayout.height) / 2f)
+        drawFitTextBatch(f, text, x + 6f, y, w - 12f, h, centered = true)
         spriteBatch.end()
     }
 
@@ -1916,9 +2086,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         spriteBatch.color = Color.WHITE
         patch.draw(spriteBatch, x, y, w, h)
         if (label.isNotEmpty()) {
-            glyphLayout.setText(fontSmall, label)
-            val tx = if (centered) x + (w - glyphLayout.width) / 2f else x + 16f
-            fontSmall.draw(spriteBatch, glyphLayout, tx, y + (h + glyphLayout.height) / 2f)
+            drawFitTextBatch(fontSmall, label, x + 12f, y, w - 24f, h, centered = centered)
         }
         spriteBatch.end()
         buttons += Pair(Rectangle(x, y, w, h), onClick)
@@ -2103,7 +2271,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val pr = profiles.active
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        fontSmall.draw(spriteBatch, "Rust Engine v6.4 • Автообновление + 250 Слоёв", px + 16f, py + ph - 16f)
+        fontSmall.draw(spriteBatch, "Rust Engine v6.5 • Редстоун + 55 Предметов", px + 16f, py + ph - 16f)
         fontSmall.draw(spriteBatch, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 16f, py + ph - 42f)
         spriteBatch.end()
 
@@ -2543,7 +2711,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         var bY = H - topH - 28f
         if (player.warmBuffTimer > 0f) { fontSmall.draw(spriteBatch, "Чай (Тепло): ${player.warmBuffTimer.toInt()}с", 16f, bY); bY -= 22f }
         if (player.minerVisionTimer > 0f) { fontSmall.draw(spriteBatch, "Отвар Шахтёра: ${player.minerVisionTimer.toInt()}с", 16f, bY); bY -= 22f }
-        if (player.speedBuffTimer > 0f) { fontSmall.draw(spriteBatch, "Эликсир Скорости: ${player.speedBuffTimer.toInt()}с", 16f, bY); bY -= 22f }
+        if (player.speedBuffTimer > 0f) { fontSmall.draw(spriteBatch, "Скорость: ${player.speedBuffTimer.toInt()}с", 16f, bY); bY -= 22f }
+        if (player.strengthBuffTimer > 0f) { fontSmall.draw(spriteBatch, "Сила (+50%): ${player.strengthBuffTimer.toInt()}с", 16f, bY); bY -= 22f }
+        if (player.shieldBuffTimer > 0f) { fontSmall.draw(spriteBatch, "Щит (+6 Бр.): ${player.shieldBuffTimer.toInt()}с", 16f, bY); bY -= 22f }
         for ((cLine, _) in chatLog) { fontSmall.draw(spriteBatch, cLine, 16f, bY); bY -= 22f }
         spriteBatch.end()
 
@@ -2655,7 +2825,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
 
         // 6. Хотбар с пиксельной рамкой + HP / Броня / Еда
-        val slotSz = min(H * 0.095f, W * 0.54f / 10.5f).coerceIn(46f, 68f)
+        val slotSz = min(H * 0.125f, W * 0.64f / 10.5f).coerceIn(58f, 86f)
         val hbW = slotSz * 10f + 20f; val hbX = (W - hbW) / 2f; val hbY = 12f
         val ohX = hbX - slotSz - 10f; val ohY = hbY + 6f
         offhandSlotRect.set(ohX, ohY, slotSz - 4f, slotSz - 4f)
@@ -2749,13 +2919,19 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         fontSmall.draw(spriteBatch, "HP: ${player.hp.toInt()}/${player.maxHp.toInt()}", px + 30f, py + ph * 0.26f)
         spriteBatch.end()
 
-        // Правая колонка: визуальные карточки блюд и отваров с иконками!
-        val listX = px + leftW + 30f; val listW = pw - leftW - 48f
+        // Правая колонка: визуальные карточки блюд и отваров со страницами!
+        val listX = px + leftW + 26f; val listW = pw - leftW - 44f
         val cfRecs = BlockRegistry.recipes.filter { it.campfireBrew }
-        val cardH = ((ph - topH - 36f) / max(1, min(6, cfRecs.size))) - 6f
-        cfRecs.take(6).forEachIndexed { idx, rec ->
+        val perPage = 5
+        val totalPages = max(1, (cfRecs.size + perPage - 1) / perPage)
+        campfirePage = campfirePage.coerceIn(0, totalPages - 1)
+        val pageBarH = 42f
+        val listH = ph - topH - 44f - pageBarH
+        val cardH = (listH / perPage) - 6f
+        val slice = cfRecs.drop(campfirePage * perPage).take(perPage)
+        slice.forEachIndexed { idx, rec ->
             val can = player.creative || rec.req.all { (id, cnt) -> player.countItem(id) >= cnt }
-            val cy = py + ph - topH - 18f - (idx + 1) * (cardH + 6f) + 6f
+            val cy = py + ph - topH - 16f - (idx + 1) * (cardH + 6f) + 6f
             drawRecipeCard(listX, cy, listW, cardH, rec, can) {
                 if (can) {
                     rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }
@@ -2764,6 +2940,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 }
             }
         }
+        drawButton(listX, py + 16f, listW * 0.32f, pageBarH, "< НАЗАД", blue = true, centered = true) { if (campfirePage > 0) campfirePage-- }
+        drawCenteredText(fontSmall, "Стр. ${campfirePage + 1}/$totalPages", listX + listW * 0.34f, py + 16f, listW * 0.32f, pageBarH)
+        drawButton(listX + listW * 0.68f, py + 16f, listW * 0.32f, pageBarH, "ДАЛЕЕ >", blue = true, centered = true) { if (campfirePage < totalPages - 1) campfirePage++ }
     }
 
     private fun renderWaystonesScreen(W: Float, H: Float) {
@@ -2881,7 +3060,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun renderInventoryScreen(W: Float, H: Float) {
-        val px = W * 0.04f; val py = H * 0.04f; val pw = W * 0.92f; val ph = H * 0.92f
+        val px = W * 0.02f; val py = H * 0.03f; val pw = W * 0.96f; val ph = H * 0.94f
         activePanelBounds.set(px, py, pw, ph)
         drawPanel(px, py, pw, ph)
 
@@ -2897,7 +3076,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val bodyTop = topY - 12f; val bodyH = bodyTop - (py + 14f)
 
         // ЛЕВАЯ КОЛОНКА: Анимированный Герой + 4 слота Брони + Левая рука + Карточка выбранного предмета!
-        val leftW = pw * 0.30f; val leftX = px + 16f
+        val leftW = pw * 0.27f; val leftX = px + 14f
         drawPanel(leftX, py + 14f, leftW, bodyH, badge = true)
 
         val aSlot = min(bodyH * 0.145f, leftW * 0.22f)
@@ -2970,7 +3149,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
 
         // ПРАВАЯ ЧАСТЬ: 54-СЛОТОВЫЙ БОЛЬШОЙ ИНВЕНТАРЬ (6 рядов x 9 слотов) ИЛИ ВИЗУАЛЬНЫЙ КРАФТ 2x2!
-        val rightX = leftX + leftW + 14f; val rightW = pw - leftW - 46f
+        val rightX = leftX + leftW + 12f; val rightW = pw - leftW - 40f
         if (invTab == 0) {
             val cell = min(rightW / 9f, (bodyH - 18f) / 6f)
             val gridW = cell * 9f
@@ -3013,11 +3192,18 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         drawPanel(px, py, pw, ph)
         val topH = ph * 0.11f; val topY = py + ph - topH - 10f
 
-        spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); font.draw(spriteBatch, "ВЕРСТАК — ВИЗУАЛЬНЫЙ КРАФТ", px + 20f, topY + topH * 0.72f); spriteBatch.end()
+        val cats = arrayOf("ВСЕ", "ИНСТР.", "СТРОЙКА", "РЕДСТОУН", "ЕДА")
+        val catKeys = arrayOf("all", "tool", "build", "redstone", "food")
+        val tabsTotalW = pw - topH * 1.3f - 36f
+        val tabW = (tabsTotalW - 24f) / 5f
+        for (c in 0 until 5) {
+            drawButton(px + 14f + c * (tabW + 6f), topY, tabW, topH, cats[c], green = wbCat == c, centered = true) {
+                wbCat = c; wbPage = 0; wbSelectedIdx = 0
+            }
+        }
         drawButton(px + pw - topH * 1.15f - 14f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
 
-        val allRecs = BlockRegistry.recipes.filter { !it.campfireBrew }
+        val allRecs = BlockRegistry.recipes.filter { !it.campfireBrew && (wbCat == 0 || it.category == catKeys[wbCat]) }
         val perPage = 20 // 5 cols x 4 rows of visual icon tiles!
         val totalPages = max(1, (allRecs.size + perPage - 1) / perPage)
         wbPage = wbPage.coerceIn(0, totalPages - 1)

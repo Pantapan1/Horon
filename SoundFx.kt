@@ -29,6 +29,12 @@ object SoundFx {
         try { s.play(vol, pitch, 0f) } catch (_: Exception) {}
     }
 
+    fun playFixedPitch(name: String, vol: Float = 0.65f, pitch: Float = 1.0f) {
+        if (!enabled) return
+        val s = map[name] ?: return
+        try { s.play(vol, pitch.coerceIn(0.5f, 2.0f), 0f) } catch (_: Exception) {}
+    }
+
     fun dispose() {
         for (s in map.values) try { s.dispose() } catch (_: Exception) {}
         map.clear()
