@@ -31,7 +31,7 @@ object SpriteArt {
     lateinit var props: Array<TextureRegion>
     lateinit var shadowTex: Texture
     lateinit var glowTex: Texture
-    lateinit var slashTex: Texture
+    lateinit var slashTex: TextureRegion
     lateinit var whitePx: Texture
     lateinit var circlePurpleBtn: Texture
     lateinit var circleBlueBtn: Texture
@@ -47,7 +47,7 @@ object SpriteArt {
 
         shadowTex = buildShadowTexture()
         glowTex = buildRadialGlowTexture()
-        slashTex = buildSlashArcTexture()
+        slashTex = TextureRegion(buildSlashArcTexture())
 
         circlePurpleBtn = buildCircleButton(Color(0.32f, 0.14f, 0.42f, 0.90f), Color(1f, 0.80f, 0.28f, 1f))
         circleBlueBtn = buildCircleButton(Color(0.14f, 0.42f, 0.72f, 0.92f), Color(0.56f, 0.90f, 1f, 1f))

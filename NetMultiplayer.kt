@@ -465,8 +465,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
         if (!isConnected) return
         val now = System.currentTimeMillis()
         remotePlayers.entries.removeIf { now - it.value.lastSeenMs > 12000L }
-        netSendExec.submit {
-            if (!isConnected) return@submit
+        netSendExec.execute {
+            if (!isConnected) return@execute
             if (isOnlineRelay) {
                 publishOnlinePacket { p ->
                     p.writeByte(1); p.writeUTF(localNick); p.writeUTF(skinId)
@@ -491,8 +491,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun broadcastBlock(x: Int, y: Int, z: Int, id: Int, skip: DataOutputStream? = null) {
         if (!isConnected) return
-        netSendExec.submit {
-            if (!isConnected) return@submit
+        netSendExec.execute {
+            if (!isConnected) return@execute
             if (isOnlineRelay) {
                 publishOnlinePacket { p -> p.writeByte(2); p.writeInt(x); p.writeInt(y); p.writeInt(z); p.writeInt(id) }
             } else {
@@ -507,8 +507,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun broadcastTime(dayCount: Int, worldTime: Float) {
         if (!isConnected || !isHost) return
-        netSendExec.submit {
-            if (!isConnected || !isHost) return@submit
+        netSendExec.execute {
+            if (!isConnected || !isHost) return@execute
             if (isOnlineRelay) {
                 publishOnlinePacket { p -> p.writeByte(6); p.writeInt(dayCount); p.writeFloat(worldTime) }
             } else {
@@ -525,8 +525,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             MobSyncSnap(it.id, it.type, it.name, it.hostile, it.isBoss, it.x, it.y, it.z, it.hp, it.maxHp,
                 it.facingRight, it.walkAnim, it.attackAnim, it.hurtFlash, it.freezeTimer, it.stunTimer, it.tamed)
         }
-        netSendExec.submit {
-            if (!isConnected || !isHost) return@submit
+        netSendExec.execute {
+            if (!isConnected || !isHost) return@execute
             val writer: (DataOutputStream) -> Unit = { p ->
                 p.writeByte(7); p.writeInt(snap.size)
                 for (s in snap) {
@@ -543,7 +543,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun sendMobHit(mobId: Int, dmg: Float, kbX: Float, kbY: Float, frost: Boolean) {
         if (!isConnected || isHost) return
-        netSendExec.submit {
+        netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p ->
                 p.writeByte(8); p.writeInt(mobId); p.writeFloat(dmg); p.writeFloat(kbX); p.writeFloat(kbY); p.writeBoolean(frost)
             }
@@ -555,7 +555,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     fun broadcastChest(x: Int, y: Int, z: Int, slots: Array<SlotItem?>, skip: DataOutputStream? = null) {
         if (!isConnected) return
         val copy = Array(27) { i -> slots[i]?.let { SlotItem(it.id, it.count) } }
-        netSendExec.submit {
+        netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p ->
                 p.writeByte(9); p.writeInt(x); p.writeInt(y); p.writeInt(z)
                 for (i in 0 until 27) { p.writeInt(copy[i]?.id ?: 0); p.writeInt(copy[i]?.count ?: 0) }
@@ -571,8 +571,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     fun broadcastDrops(drops: Collection<DroppedItem>) {
         if (!isConnected || !isHost) return
         val snap = drops.take(28).map { DropSyncSnap(it.id, it.itemId, it.count, it.x, it.y, it.z) }
-        netSendExec.submit {
-            if (!isConnected || !isHost) return@submit
+        netSendExec.execute {
+            if (!isConnected || !isHost) return@execute
             val writer: (DataOutputStream) -> Unit = { p ->
                 p.writeByte(10); p.writeInt(snap.size)
                 for (s in snap) { p.writeInt(s.id); p.writeInt(s.itemId); p.writeInt(s.count); p.writeFloat(s.x); p.writeFloat(s.y); p.writeFloat(s.z) }
@@ -584,7 +584,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun sendDropPickup(dropId: Int) {
         if (!isConnected || isHost) return
-        netSendExec.submit {
+        netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(11); p.writeInt(dropId) }
             if (isOnlineRelay) publishOnlinePacket(writer)
             else clientOut?.let { o -> try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {} }
@@ -593,7 +593,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun broadcastChat(nick: String, msg: String, skip: DataOutputStream? = null) {
         if (!isConnected) return
-        netSendExec.submit {
+        netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(12); p.writeUTF(nick); p.writeUTF(msg) }
             if (isOnlineRelay) publishOnlinePacket(writer)
             else {
@@ -605,7 +605,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun sendPvpHit(targetPeerId: String, dmg: Float) {
         if (!isConnected || !pvpEnabled) return
-        netSendExec.submit {
+        netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(13); p.writeUTF(targetPeerId); p.writeFloat(dmg); p.writeUTF(localNick) }
             if (isOnlineRelay) publishOnlinePacket(writer)
             else {
@@ -617,7 +617,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun broadcastSign(x: Int, y: Int, z: Int, txt: String, skip: DataOutputStream? = null) {
         if (!isConnected) return
-        netSendExec.submit {
+        netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(14); p.writeInt(x); p.writeInt(y); p.writeInt(z); p.writeUTF(txt) }
             if (isOnlineRelay) publishOnlinePacket(writer)
             else {
