@@ -170,8 +170,8 @@ data class MobEntity(
     var fuse: Float = 0f,
     var freezeTimer: Float = 0f, var stunTimer: Float = 0f,
     var tamed: Boolean = false,
-    var stolenItemId: Int = 0
-    var barterCd: Float = 0f
+    var stolenItemId: Int = 0,
+    var barterCd: Float = 0f,
     var breedCd: Float = 0f
 )
 
