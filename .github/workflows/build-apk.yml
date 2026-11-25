@@ -1,4 +1,4 @@
-name: Build VoxelHorizon v3.2 APK (Rust-WASM + Studio)
+name: Build VoxelHorizon Native v4.0 APK (Kotlin + libGDX)
 
 on:
   push:
@@ -9,17 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  build-android-apk:
+  build-native-apk:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
 
       - name: Setup Java 17
         uses: actions/setup-java@v5
@@ -27,58 +22,51 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Rust & wasm-pack
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Gradle 8.5
+        uses: gradle/actions/setup-gradle@v4
         with:
-          targets: wasm32-unknown-unknown
+          gradle-version: '8.5'
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Install npm dependencies
-        run: npm install
-
-      - name: Prepare www bundle
-        run: npm run prepare-www
-
-      - name: Compile Rust-WASM Core (lib.rs -> www/vh_core.wasm)
+      - name: Organize flat repository into Android + libGDX layout
         run: |
-          wasm-pack build --release --target web --out-dir www --out-name vh_core
-          rm -f www/.gitignore www/package.json
+          mkdir -p app/src/main/java/com/voxelhorizon/nativegame
+          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/res/mipmap-hdpi app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi
 
-      - name: Generate Android project via Capacitor
-        run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
-          npx cap sync android
+          cp -f app_build.gradle app/build.gradle
+          cp -f AndroidManifest.xml app/src/main/AndroidManifest.xml
 
-      - name: Configure App Icon & Landscape Fullscreen
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="sensorLandscape"/' "$MANIFEST"
+          # Kotlin sources
+          for kt in *.kt; do
+            [ -f "$kt" ] && cp -f "$kt" app/src/main/java/com/voxelhorizon/nativegame/
+          done
+
+          # Assets (textures, anime cover, font, stereo OST)
+          for asset in anime_tiles.png cover_anime.jpg font.ttf ost_*.wav; do
+            [ -f "$asset" ] && cp -f "$asset" app/src/main/assets/
+          done
+
+          # App icon
           if [ -f "icon.png" ]; then
-            rm -rf android/app/src/main/res/mipmap-anydpi-v26
-            for dir in android/app/src/main/res/mipmap-*dpi; do
-              rm -f "$dir/ic_launcher_foreground.png"
-              cp -f icon.png "$dir/ic_launcher.png"
-              cp -f icon.png "$dir/ic_launcher_round.png"
-            done
+            cp -f icon.png app/src/main/res/mipmap-hdpi/ic_launcher.png
+            cp -f icon.png app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            cp -f icon.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
           fi
 
-      - name: Build Debug APK
+          printf "org.gradle.jvmargs=-Xmx3072m\nandroid.useAndroidX=false\n" > gradle.properties
+
+      - name: Compile Native Kotlin + libGDX APK
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ../VoxelHorizon-v3.2.apk
+          gradle assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk VoxelHorizon-Native-v4.0.apk
+          ls -lh VoxelHorizon-Native-v4.0.apk
 
       - name: Publish direct APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.2-latest
-          name: VoxelHorizon v3.2 APK
-          files: VoxelHorizon-v3.2.apk
+          tag_name: v4.0-native-latest
+          name: VoxelHorizon Native v4.0 APK (Kotlin + OpenGL ES)
+          files: VoxelHorizon-Native-v4.0.apk
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
