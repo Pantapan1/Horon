@@ -31,4 +31,8 @@ object RustEngine {
         outVerts: ByteBuffer, outDiag: ByteBuffer, outProps: ByteBuffer,
         outLights: ByteBuffer, outOres: ByteBuffer, outCounts: ByteBuffer
     )
+
+    @JvmStatic external fun nativeRevealFog(x: Int, y: Int, rad: Int)
+    @JvmStatic external fun nativeFindElevatorZ(x: Int, y: Int, curZ: Int): Int
+    @JvmStatic external fun nativeSampleMinimap(cx: Int, cy: Int, step: Int, size: Int, outRgba: ByteBuffer)
 }

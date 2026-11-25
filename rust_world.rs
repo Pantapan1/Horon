@@ -157,6 +157,9 @@ pub fn build_block_lut() -> [BlockMeta; 256] {
     set(69, false, true,  true,  false, false, false, false, true,  -1, -1, 190.0, 0xC662FF, 0xBC54FF);
     set(70, false, true,  true,  false, false, false, false, true,  -1, -1, 190.0, 0xFF385A, 0xEC284A);
     set(71, true,  true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xC68232);
+    set(72, false, true,  true,  false, false, false, false, false, -1, -1, 170.0, 0x4CEEFF, 0x48D8FF);
+    set(73, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xD83848);
+    set(74, true,  true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xB87E44);
 
     lut
 }
@@ -164,6 +167,7 @@ pub fn build_block_lut() -> [BlockMeta; 256] {
 pub struct IsoChunk {
     pub blocks: Box<[u8; CHUNK_LEN]>,
     pub surface_h: [i16; CS * CS],
+    pub explored: [u64; 4],
 }
 
 #[inline(always)]
@@ -589,6 +593,36 @@ impl RustWorld {
                 }
                 data[cidx(7, 6, bh + 1)] = if d_hash % 2 == 0 { 71 } else { 35 };
                 data[cidx(6, 6, bh + 1)] = 60;
+            } else if (cx != 0 || cy != 0) && d_hash >= 88 {
+                // Cozy Village Trader House!
+                let vh = (surf_h[7 * CS + 7] as usize).clamp(139, 155);
+                for dx in -2i32..=2 {
+                    for dy in -2i32..=2 {
+                        let lx = (7 + dx) as usize;
+                        let ly = (7 + dy) as usize;
+                        data[cidx(lx, ly, vh)] = 7;
+                        let is_wall = dx.abs() == 2 || dy.abs() == 2;
+                        let is_door = dy == 2 && dx == 0;
+                        let is_win = (dx == 0 && dy == -2) || (dy == 0 && dx.abs() == 2);
+                        for z in (vh + 1)..=(vh + 3) {
+                            data[cidx(lx, ly, z)] = if is_door && z == vh + 1 {
+                                57
+                            } else if is_door && z == vh + 2 {
+                                0
+                            } else if is_wall {
+                                if is_win && z == vh + 2 { 15 } else if dx.abs() == 2 && dy.abs() == 2 { 5 } else { 7 }
+                            } else {
+                                0
+                            };
+                        }
+                        if vh + 4 < MAX_Z {
+                            data[cidx(lx, ly, vh + 4)] = 51;
+                        }
+                    }
+                }
+                data[cidx(6, 6, vh + 1)] = 35;
+                data[cidx(8, 6, vh + 1)] = 60;
+                data[cidx(7, 10, vh + 1)] = 59; // Village campfire outside
             }
         }
 
@@ -603,9 +637,20 @@ impl RustWorld {
             }
         }
 
+        let mut explored = [0u64; 4];
+        if cx == 0 && cy == 0 {
+            // Starter camp shaft revealed initially
+            for ly in 0..8usize {
+                for lx in 0..8usize {
+                    let bit = ly * CS + lx;
+                    explored[bit >> 6] |= 1u64 << (bit & 63);
+                }
+            }
+        }
         Box::new(IsoChunk {
             blocks: data,
             surface_h: surf_h,
+            explored,
         })
     }
 
@@ -780,25 +825,27 @@ impl RustWorld {
     pub fn pick_iso_block(&mut self, wx_s: f32, wy_s: f32, pz: i32, slice_z: i32) -> (i32, i32, i32, u8) {
         let z_top = (MAX_Z_I32 - 1).min(slice_z);
         let z_bot = 1.max(pz - 6);
+        // Exact diamond hit-test: cube centers sit at integer (gx, gy), so .round() matches visual tile 1:1!
         for gz in (z_bot..=z_top).rev() {
+            // Check prop height (+0.85), top diamond (+1.0), and cube side face (+0.45)
             let adj_top = wy_s - (gz + 1) as f32 * ZH;
-            let gx_t = (0.5 * (wx_s / TW - adj_top / TH)).floor() as i32;
-            let gy_t = (0.5 * (-adj_top / TH - wx_s / TW)).floor() as i32;
+            let gx_t = (0.5 * (wx_s / TW - adj_top / TH)).round() as i32;
+            let gy_t = (0.5 * (-adj_top / TH - wx_s / TW)).round() as i32;
             let id_t = self.get_block(gx_t, gy_t, gz);
             if id_t > 0 && !self.lut[id_t as usize].is_liquid {
                 return (gx_t, gy_t, gz, id_t);
             }
-            let adj_mid = wy_s - (gz as f32 + 0.5) * ZH;
-            let gx_m = (0.5 * (wx_s / TW - adj_mid / TH)).floor() as i32;
-            let gy_m = (0.5 * (-adj_mid / TH - wx_s / TW)).floor() as i32;
+            let adj_mid = wy_s - (gz as f32 + 0.45) * ZH;
+            let gx_m = (0.5 * (wx_s / TW - adj_mid / TH)).round() as i32;
+            let gy_m = (0.5 * (-adj_mid / TH - wx_s / TW)).round() as i32;
             let id_m = self.get_block(gx_m, gy_m, gz);
             if id_m > 0 && !self.lut[id_m as usize].is_liquid {
                 return (gx_m, gy_m, gz, id_m);
             }
         }
         let adj_p = wy_s - pz as f32 * ZH;
-        let gx = (0.5 * (wx_s / TW - adj_p / TH)).floor() as i32;
-        let gy = (0.5 * (-adj_p / TH - wx_s / TW)).floor() as i32;
+        let gx = (0.5 * (wx_s / TW - adj_p / TH)).round() as i32;
+        let gy = (0.5 * (-adj_p / TH - wx_s / TW)).round() as i32;
         let pzc = pz.clamp(1, MAX_Z_I32 - 1);
         let id = self.get_block(gx, gy, pzc);
         if id > 0 {
@@ -806,6 +853,93 @@ impl RustWorld {
         } else {
             let bz = 1.max(pzc - 1);
             (gx, gy, bz, self.get_block(gx, gy, bz))
+        }
+    }
+
+    pub fn reveal_fog(&mut self, cx_w: i32, cy_w: i32, rad: i32) {
+        let r = rad.clamp(1, 10);
+        let r2 = r * r;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dy * dy > r2 {
+                    continue;
+                }
+                let wx = cx_w + dx;
+                let wy = cy_w + dy;
+                let (cx, lx) = chunk_coord(wx);
+                let (cy, ly) = chunk_coord(wy);
+                self.ensure_chunk(cx, cy);
+                if let Some(ch) = self.chunks.get_mut(&(cx, cy)) {
+                    let bit = ly * CS + lx;
+                    ch.explored[bit >> 6] |= 1u64 << (bit & 63);
+                }
+            }
+        }
+    }
+
+    pub fn find_elevator_z(&mut self, wx: i32, wy: i32, cur_z: i32) -> i32 {
+        // Look below first if near surface, else look above first; cycle through all elevators in column!
+        let mut found_above = -1i32;
+        let mut found_below = -1i32;
+        for z in (cur_z + 2)..MAX_Z_I32 {
+            if self.get_block(wx, wy, z) == 72 {
+                found_above = z;
+                break;
+            }
+        }
+        for z in (1..=(cur_z - 2).max(1)).rev() {
+            if self.get_block(wx, wy, z) == 72 {
+                found_below = z;
+                break;
+            }
+        }
+        if cur_z >= SEA_Z - 4 {
+            if found_below > 0 { found_below } else { found_above }
+        } else {
+            if found_above > 0 { found_above } else { found_below }
+        }
+    }
+
+    pub fn sample_minimap(&mut self, center_x: i32, center_y: i32, step: i32, size: i32, out_rgba: &mut [i32]) {
+        let sz = size.clamp(8, 64) as usize;
+        let half = (sz as i32) / 2;
+        let st = step.max(1);
+        for my in 0..sz {
+            for mx in 0..sz {
+                let wx = center_x + (mx as i32 - half) * st;
+                let wy = center_y + (my as i32 - half) * st;
+                let sz_h = self.get_surface_z(wx, wy);
+                let top_id = self.get_block(wx, wy, sz_h);
+                let abv_id = self.get_block(wx, wy, (sz_h + 1).min(MAX_Z_I32 - 1));
+                let liq_id = if sz_h < SEA_Z { self.get_block(wx, wy, SEA_Z) } else { 0 };
+                let col: u32 = if liq_id == 9 {
+                    0x267EE0FF
+                } else if liq_id == 20 {
+                    0x8ED0FAFF
+                } else if liq_id == 29 {
+                    0xF86218FF
+                } else if abv_id == 44 {
+                    0xF8A6CCFF // Sakura canopy
+                } else if abv_id == 6 || abv_id == 5 || abv_id == 27 || abv_id == 46 {
+                    0x2E7D32FF // Forest canopy
+                } else if abv_id == 51 || abv_id == 7 || top_id == 7 || top_id == 41 {
+                    0xC89648FF // Village / Ruin structure!
+                } else {
+                    match top_id {
+                        1 => 0x56B846FF,
+                        8 => 0xE6D696FF,
+                        19 | 43 => 0xEAF4FFFF,
+                        42 => 0x4EA8F2FF,
+                        30 => 0x7E2E30FF,
+                        31 => 0x544236FF,
+                        _ => 0x7A828EFF,
+                    }
+                };
+                let idx = my * sz + mx;
+                if idx < out_rgba.len() {
+                    out_rgba[idx] = col as i32;
+                }
+            }
         }
     }
 }

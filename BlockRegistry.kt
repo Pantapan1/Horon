@@ -64,6 +64,7 @@ object BlockRegistry {
     lateinit var atlasTexture: Texture
     private var itemsTexture1: Texture? = null
     private var itemsTexture2: Texture? = null
+    private var itemsTexture3: Texture? = null
     val iconRegions = ConcurrentHashMap<Int, TextureRegion>()
     private var nextModTile = 52
 
@@ -156,6 +157,9 @@ object BlockRegistry {
         reg(ItemDef(69, "Кристалл аметиста", solid = false, transparent = true, isProp = true, propIdx = 22, isOre = true, lightRadius = 190f, lightColor = 0xC662FF, hardness = 0.8f, dropId = 141, toolType = "pick", colorHex = 0xBC54FF))
         reg(ItemDef(70, "Кристалл рубина", solid = false, transparent = true, isProp = true, propIdx = 23, isOre = true, lightRadius = 190f, lightColor = 0xFF385A, hardness = 0.9f, dropId = 142, toolType = "pick", colorHex = 0xEC284A))
         reg(ItemDef(71, "Сундук (Ловушка!)", solid = true, transparent = true, isProp = true, propIdx = 2, hardness = 1.0f, dropId = 103, colorHex = 0xC68232, interactive = "mimic"))
+        reg(ItemDef(72, "Шахтный Лифт", solid = false, transparent = true, isProp = true, propIdx = 24, lightRadius = 170f, lightColor = 0x4CEEFF, hardness = 1.5f, dropId = 72, toolType = "pick", colorHex = 0x48D8FF, interactive = "elevator"))
+        reg(ItemDef(73, "Шипы-ловушка", solid = false, transparent = true, isProp = true, propIdx = 25, hardness = 1.0f, dropId = 73, toolType = "pick", colorHex = 0xD83848))
+        reg(ItemDef(74, "Авто-арбалет (Турель)", solid = true, transparent = true, isProp = true, propIdx = 26, hardness = 1.4f, dropId = 74, toolType = "axe", colorHex = 0xB87E44))
 
         // --- ПРЕДМЕТЫ, ОРУЖИЕ, ОТВАРЫ И НАГРАДЫ БОССОВ (101..148) ---
         reg(ItemDef(101, "Уголь", isItem = true, colorHex = 0x2B2E38, fuelPower = 80f))
@@ -207,6 +211,13 @@ object BlockRegistry {
         reg(ItemDef(148, "Тёплая меховая шуба", isItem = true, colorHex = 0x9C6438, armorSlot = 1, armorDef = 4, warmArmor = true))
         reg(ItemDef(139, "Рубиновый Клинок (Вампиризм)", isItem = true, colorHex = 0xFF3458, weaponStyle = "ruby", damage = 20))
         reg(ItemDef(149, "Рубиновый Нагрудник", isItem = true, colorHex = 0xE82648, armorSlot = 1, armorDef = 7, warmArmor = true))
+        reg(ItemDef(150, "Удочка (Рыбалка)", isItem = true, colorHex = 0x9C6834))
+        reg(ItemDef(151, "Карась", isItem = true, colorHex = 0x76BAE0, healFood = 5, healHp = 3))
+        reg(ItemDef(152, "Лосось", isItem = true, colorHex = 0xE86C4C, healFood = 6, healHp = 4))
+        reg(ItemDef(153, "Ледяной Окунь", isItem = true, colorHex = 0x56E2FF, healFood = 6, healHp = 5))
+        reg(ItemDef(154, "Золотая Рыбка", isItem = true, colorHex = 0xF6C62A, healFood = 10, healHp = 10))
+        reg(ItemDef(155, "Уха (Рыбный суп)", isItem = true, colorHex = 0xF2A23A, healFood = 14, healHp = 10))
+        reg(ItemDef(156, "Ягодный пирог", isItem = true, colorHex = 0xE23452, healFood = 12, healHp = 8))
 
         // --- РЕЦЕПТЫ: Карман (2x2), Верстак (3x3) и Костёр (Готовка и Отвары!) ---
         recipes += RecipeDef(7, 4, listOf(5 to 1), "1 Дуб -> 4 Доски", pocket2x2 = true)
@@ -246,6 +257,10 @@ object BlockRegistry {
         recipes += RecipeDef(65, 2, listOf(7 to 2, 105 to 1), "2 Доски + Палка -> 2 Таблички")
         recipes += RecipeDef(116, 1, listOf(102 to 1, 101 to 1), "Железо + Уголь -> Огниво")
         recipes += RecipeDef(120, 1, listOf(102 to 3), "3 Железа -> Пустое ведро")
+        recipes += RecipeDef(150, 1, listOf(105 to 3, 147 to 1), "3 Палки + Слизь -> Удочка")
+        recipes += RecipeDef(72, 2, listOf(102 to 4, 141 to 1), "4 Железа + Аметист -> 2 Шахтных Лифта")
+        recipes += RecipeDef(73, 2, listOf(102 to 3), "3 Железа -> 2 Шипы-ловушки")
+        recipes += RecipeDef(74, 1, listOf(123 to 1, 102 to 3, 7 to 4), "Лук + 3 Железа + 4 Доски -> Авто-арбалет")
 
         // Рецепты Костра (Готовка и Отвары!)
         recipes += RecipeDef(146, 2, listOf(145 to 2), "2 Гриба -> 2 Жареных гриба", campfireBrew = true)
@@ -253,6 +268,9 @@ object BlockRegistry {
         recipes += RecipeDef(137, 1, listOf(145 to 2, 141 to 1), "2 Гриба + Аметист -> Отвар Шахтёра (видит руды)", campfireBrew = true)
         recipes += RecipeDef(138, 1, listOf(144 to 2, 147 to 1), "2 Ягоды + Слизь -> Эликсир Скорости", campfireBrew = true)
         recipes += RecipeDef(114, 2, listOf(143 to 2), "2 Пшеницы -> 2 Тёплых хлеба", campfireBrew = true)
+        recipes += RecipeDef(155, 1, listOf(151 to 1, 145 to 1), "Карась + Гриб -> Горячая Уха", campfireBrew = true)
+        recipes += RecipeDef(155, 1, listOf(152 to 1, 145 to 1), "Лосось + Гриб -> Горячая Уха", campfireBrew = true)
+        recipes += RecipeDef(156, 1, listOf(143 to 2, 144 to 3), "2 Пшеницы + 3 Ягоды -> Ягодный пирог", campfireBrew = true)
 
         smeltMap[12] = 102; smeltMap[13] = 103; smeltMap[48] = 140
         smeltMap[8] = 15; smeltMap[145] = 146; smeltMap[4] = 3; smeltMap[47] = 16
@@ -370,6 +388,21 @@ object BlockRegistry {
             iconRegions[139] = c2(1, 0) // Рубиновый Клинок
             iconRegions[149] = c2(2, 3) // Рубиновый Нагрудник
         }
+
+        val f3 = Gdx.files.internal("anime_items_3.png")
+        if (f3.exists()) {
+            val tex = Texture(f3).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest) }
+            itemsTexture3 = tex
+            val cw = tex.width / 4; val ch = tex.height / 2
+            fun c3(c: Int, r: Int) = TextureRegion(tex, c * cw, r * ch, cw, ch)
+            iconRegions[150] = c3(0, 0) // Удочка
+            iconRegions[151] = c3(1, 0) // Карась
+            iconRegions[152] = c3(2, 0) // Лосось
+            iconRegions[153] = c3(3, 0) // Ледяной Окунь
+            iconRegions[154] = c3(0, 1) // Золотая Рыбка
+            iconRegions[155] = c3(1, 1) // Уха
+            iconRegions[156] = c3(2, 1) // Ягодный пирог
+        }
     }
 
     fun attachPropIcons(propsTex: Texture) {
@@ -390,6 +423,9 @@ object BlockRegistry {
         iconRegions[68] = pIcon(21) // Цветы
         iconRegions[69] = pIcon(22) // Кристалл аметиста
         iconRegions[70] = pIcon(23) // Кристалл рубина
+        iconRegions[72] = pIcon(24) // Шахтный Лифт
+        iconRegions[73] = pIcon(25) // Шипы-ловушка
+        iconRegions[74] = pIcon(26) // Авто-арбалет
     }
 
     fun registerModBlock(id: Int, name: String, r: Float, g: Float, b: Float): Int {
@@ -409,6 +445,6 @@ object BlockRegistry {
     fun dispose() {
         if (::atlasTexture.isInitialized) atlasTexture.dispose()
         if (::atlasPixmap.isInitialized) atlasPixmap.dispose()
-        itemsTexture1?.dispose(); itemsTexture2?.dispose()
+        itemsTexture1?.dispose(); itemsTexture2?.dispose(); itemsTexture3?.dispose()
     }
 }

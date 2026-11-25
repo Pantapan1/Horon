@@ -170,8 +170,8 @@ data class MobEntity(
     var fuse: Float = 0f,
     var freezeTimer: Float = 0f, var stunTimer: Float = 0f,
     var tamed: Boolean = false,
-    var stolenItemId: Int = 0
-    var barterCd: Float = 0f
+    var stolenItemId: Int = 0,
+    var barterCd: Float = 0f,
     var breedCd: Float = 0f
 )
 
@@ -225,7 +225,11 @@ class EntityAndWeatherManager {
 
     private var weatherTimer = 90f
     private var lightningTimer = 6f
-    private var spawnTimer = 2.0f
+    private var spawnTimer = 5.0f
+    private var turretTimer = 0f
+    private var trapTimer = 0f
+    var isBloodMoon = false
+    private var lastBloodMoonDay = -1
     private var seasonWorldTimer = 0f
     private var propFxTimer = 0f
     private var nextId = 1
@@ -238,7 +242,7 @@ class EntityAndWeatherManager {
 
     fun spawnMob(type: String, x: Float, y: Float, z: Float): MobEntity {
         val isBoss = type in setOf("inferno_lord", "sky_guardian", "grove_guardian", "frost_titan", "depth_devourer")
-        val hostile = type !in setOf("sheep", "cow", "pig", "chicken", "fox_pet", "deer", "boar", "wolf", "bee")
+        val hostile = type !in setOf("sheep", "cow", "pig", "chicken", "fox_pet", "deer", "boar", "wolf", "bee", "trader")
         val maxHp = when (type) {
             "depth_devourer" -> 220f; "frost_titan" -> 190f; "grove_guardian" -> 170f
             "inferno_lord" -> 160f; "sky_guardian" -> 145f
@@ -252,7 +256,7 @@ class EntityAndWeatherManager {
             "inferno_lord" -> "Повелитель Преисподней"; "sky_guardian" -> "Страж Небес"
             "grove_guardian" -> "Древний Страж Рощи"; "frost_titan" -> "Морозный Титан"; "depth_devourer" -> "Пожиратель Глубин"
             "sheep" -> "Овца"; "cow" -> "Корова"; "pig" -> "Свинья"; "chicken" -> "Курица"
-            "deer" -> "Олень"; "boar" -> "Кабан"; "wolf" -> "Волк"; "bee" -> "Пчела"
+            "deer" -> "Олень"; "boar" -> "Кабан"; "wolf" -> "Волк"; "bee" -> "Пчела"; "trader" -> "Торговец"
             "goblin" -> "Гоблин"; "slime" -> "Слайм"; "mini_slime" -> "Мини-Слайм"; "yeti" -> "Ледяной Йети"
             "bat" -> "Летучая Мышь"; "crystal_golem" -> "Кристальный Голем"; "magma_slime" -> "Магмовый Слайм"; "mimic" -> "Сундук-Мимик"
             "zombie" -> "Зомби"; "skeleton" -> "Скелет"; "creeper" -> "Крипер"; "spider" -> "Паук"
@@ -374,7 +378,7 @@ class EntityAndWeatherManager {
     }
 
     fun damageMob(m: MobEntity, dmg: Float, kbX: Float, kbY: Float, frostHit: Boolean = false, onKill: (MobEntity) -> Unit) {
-        if (m.tamed) return
+        if (m.tamed || m.type == "trader") return
         m.hp -= dmg
         m.hurtFlash = 0.22f
         m.hurtSquash = 1.0f
@@ -569,12 +573,54 @@ class EntityAndWeatherManager {
 
         if (isNetClient) return
 
-        // Спавн мобов
+        // Кровавая Луна (раз в 7 ночей — контролируемый набег на лагерь!)
+        val bloodNow = world.dimension == "overworld" && dayCount >= 7 && (dayCount % 7 == 0) && dayFactor < 0.25f
+        isBloodMoon = bloodNow
+        if (bloodNow && lastBloodMoonDay != dayCount) {
+            lastBloodMoonDay = dayCount
+            floatingTexts.add(FloatingText(player.x, player.y, player.z + 2.0f, "КРОВАВАЯ ЛУНА!", Color(1f, 0.2f, 0.25f, 1f), 2.5f))
+            SoundFx.play("boss", 0.7f)
+        }
+
+        // Авто-арбалеты (Турели 74) защищают базу и стреляют по ближайшим врагам!
+        turretTimer += dt
+        if (turretTimer >= 1.25f) {
+            turretTimer = 0f
+            val pxI = floor(player.x).toInt(); val pyI = floor(player.y).toInt(); val pzI = floor(player.z).toInt()
+            for (dx in -7..7) for (dy in -7..7) for (dz in -1..2) {
+                if (world.getBlock(pxI + dx, pyI + dy, pzI + dz) == 74) {
+                    val tx = pxI + dx + 0.5f; val ty = pyI + dy + 0.5f; val tz = (pzI + dz).toFloat()
+                    val tgt = mobs.filter { it.hostile && !it.tamed && abs(it.z - tz) < 3f && hypot((it.x - tx).toDouble(), (it.y - ty).toDouble()) < 10.0 }
+                        .minByOrNull { hypot((it.x - tx).toDouble(), (it.y - ty).toDouble()) }
+                    if (tgt != null) {
+                        fireProjectile(tx, ty, tz, tgt.x - tx, tgt.y - ty, 9f, false, false, true)
+                        SoundFx.play("hit", 0.35f)
+                    }
+                }
+            }
+        }
+
+        // Шипы-ловушки (73) наносят урон врагам, наступившим на них!
+        trapTimer += dt
+        if (trapTimer >= 0.55f) {
+            trapTimer = 0f
+            for (m in mobs) {
+                if (m.hostile && !m.tamed && world.getBlock(floor(m.x).toInt(), floor(m.y).toInt(), floor(m.z).toInt()) == 73) {
+                    damageMob(m, 5f, 0f, 0f, false, onMobKill)
+                    spawnBlockParticles(floor(m.x).toInt(), floor(m.y).toInt(), floor(m.z).toInt(), 0xE82848, 4)
+                }
+            }
+        }
+
+        // Спокойный, не перегруженный спавн мобов (макс 7 мобов в мире, макс 3 врага обычно / 5 в Кровавую Луну!)
         spawnTimer -= dt
-        if (spawnTimer <= 0f && mobs.size < 14) {
-            spawnTimer = 3.0f
+        val maxTotalMobs = if (bloodNow) 9 else 7
+        val maxHostileMobs = if (bloodNow) 5 else 3
+        val curHostiles = mobs.count { it.hostile && !it.tamed }
+        if (spawnTimer <= 0f && mobs.size < maxTotalMobs) {
+            spawnTimer = if (bloodNow) 4.0f else 6.8f
             val ang = Random.nextFloat() * PI.toFloat() * 2f
-            val dist = 7f + Random.nextFloat() * 8f
+            val dist = 9.5f + Random.nextFloat() * 6.5f
             val sx = floor(player.x + cos(ang) * dist).toInt()
             val sy = floor(player.y + sin(ang) * dist).toInt()
             val pz = floor(player.z).toInt()
@@ -601,7 +647,10 @@ class EntityAndWeatherManager {
                         curSeason == Season.SUMMER -> listOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf", "bee").random()
                         else -> listOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf").random()
                     }
-                    spawnMob(type, sx + 0.5f, sy + 0.5f, spawnZ)
+                    val wouldBeHostile = type !in setOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf", "bee", "trader")
+                    if (!wouldBeHostile || curHostiles < maxHostileMobs) {
+                        spawnMob(type, sx + 0.5f, sy + 0.5f, spawnZ)
+                    }
                 }
             }
         }
@@ -610,7 +659,7 @@ class EntityAndWeatherManager {
         for (m in mobs) {
             if (m.tamed) { tickAlly(m, -1.0f, 0.8f); continue }
             val distP = hypot((player.x - m.x).toDouble(), (player.y - m.y).toDouble()).toFloat()
-            if (distP > 34f || abs(player.z - m.z) > 22f) { mobs.remove(m); continue }
+            if ((m.type != "trader" && distP > 32f) || distP > 48f || abs(player.z - m.z) > 24f) { mobs.remove(m); continue }
             m.aiTimer -= dt; m.atkCd = max(0f, m.atkCd - dt)
             if (m.hurtFlash > 0f) m.hurtFlash -= dt
             if (m.hurtSquash > 0f) m.hurtSquash = max(0f, m.hurtSquash - dt * 5f)

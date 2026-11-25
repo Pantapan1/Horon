@@ -11,8 +11,8 @@ android {
         applicationId "com.voxelhorizon.nativegame"
         minSdk 24
         targetSdk 34
-        versionCode 60
-        versionName "6.0.0"
+        versionCode 62
+        versionName "6.2.0"
     }
 
     buildTypes {

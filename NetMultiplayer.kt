@@ -29,6 +29,8 @@ data class RemotePlayer(
     var attackAnim: Float = 0f,
     var isSleeping: Boolean = false,
     var heldId: Int = 0,
+    var hp: Float = 20f,
+    var maxHp: Float = 20f,
     var lastSeenMs: Long = System.currentTimeMillis()
 )
 
@@ -51,6 +53,9 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     @Volatile var statusText = "Одиночная игра"
     var localNick = "Игрок"
     @Volatile var pvpEnabled = false
+    @Volatile var selectedBrokerIdx = 0
+    @Volatile var roomPassword = ""
+    private var presenceRunning = false
     private val localPeerId = Random.nextInt(100000, 999999999)
 
     val remotePlayers = ConcurrentHashMap<String, RemotePlayer>()
@@ -70,6 +75,17 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     // =========================================================================
     // 1. ОНЛАЙН-МУЛЬТИПЛЕЕР ЧЕРЕЗ ИНТЕРНЕТ (КОД КОМНАТЫ — РАБОТАЕТ НА ЛЮБОМ РАССТОЯНИИ!)
     // =========================================================================
+    fun brokerHostName(): String = ONLINE_BROKERS[selectedBrokerIdx.coerceIn(0, ONLINE_BROKERS.lastIndex)].first
+
+    fun cycleBroker() {
+        selectedBrokerIdx = (selectedBrokerIdx + 1) % ONLINE_BROKERS.size
+    }
+
+    private fun buildRoomTopic(code: String): String {
+        val cleanPass = roomPassword.trim()
+        return if (cleanPass.isEmpty()) "vh62/room/$code" else "vh62/room/${code}_${cleanPass.hashCode().and(0xFFFF)}"
+    }
+
     fun startOnlineHost() {
         stop()
         val code = Random.nextInt(1000, 9999).toString()
@@ -92,11 +108,14 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     }
 
     private fun connectMqttRelay(code: String, asHost: Boolean) {
-        mqttTopic = "vh53/room/$code"
+        mqttTopic = buildRoomTopic(code)
         thread(isDaemon = true) {
             var connectedBroker = ""
             var sock: Socket? = null
-            for ((host, port) in ONLINE_BROKERS) {
+            // Try user-selected broker FIRST so both friends reliably hit the exact same server!
+            val ordered = listOf(ONLINE_BROKERS[selectedBrokerIdx.coerceIn(0, ONLINE_BROKERS.lastIndex)]) +
+                ONLINE_BROKERS.filterIndexed { idx, _ -> idx != selectedBrokerIdx }
+            for ((host, port) in ordered) {
                 try {
                     val s = Socket()
                     s.connect(InetSocketAddress(host, port), 4500)
@@ -255,6 +274,90 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     // =========================================================================
     // 2. ЛОКАЛЬНАЯ СЕТЬ (LAN Wi-Fi) И ПРЯМОЙ IP (TCP)
     // =========================================================================
+
+    fun startFriendsPresence(profiles: ProfileManager) {
+        if (presenceRunning) return
+        presenceRunning = true
+        thread(isDaemon = true) {
+            while (presenceRunning) {
+                var pSock: Socket? = null
+                try {
+                    val (host, port) = ONLINE_BROKERS[selectedBrokerIdx.coerceIn(0, ONLINE_BROKERS.lastIndex)]
+                    val s = Socket()
+                    s.connect(InetSocketAddress(host, port), 5000)
+                    s.soTimeout = 0
+                    pSock = s
+                    val out = DataOutputStream(s.getOutputStream())
+                    val inp = DataInputStream(s.getInputStream())
+                    sendMqttConnect(out, "vh62_p_${localPeerId}_${Random.nextInt(100, 999)}")
+                    val ackType = inp.readUnsignedByte()
+                    val ackLen = readMqttVarInt(inp)
+                    val ackB = ByteArray(ackLen); inp.readFully(ackB)
+                    if ((ackType and 0xF0) != 0x20) throw RuntimeException("Presence CONNACK fail")
+                    sendMqttSubscribe(out, 2, "vh62/presence/#")
+
+                    // Publish our presence every 15s
+                    thread(isDaemon = true) {
+                        while (presenceRunning && !s.isClosed) {
+                            try {
+                                val pr = profiles.active
+                                val topic = "vh62/presence/${pr.friendId}"
+                                val payloadStr = "${pr.friendId}|${pr.nick}|${if (isConnected) roomCode else ""}|$selectedBrokerIdx"
+                                val bodyBos = ByteArrayOutputStream()
+                                val bp = DataOutputStream(bodyBos)
+                                bp.writeUTF(topic)
+                                bp.write(payloadStr.toByteArray(Charsets.UTF_8))
+                                val body = bodyBos.toByteArray()
+                                val pkt = ByteArrayOutputStream()
+                                pkt.write(0x30)
+                                writeMqttVarInt(pkt, body.size)
+                                pkt.write(body)
+                                synchronized(out) { out.write(pkt.toByteArray()); out.flush() }
+
+                                // Mark stale friends offline (>40s)
+                                val now = System.currentTimeMillis()
+                                for (fr in pr.friends) if (fr.online && now - fr.lastSeenMs > 40000L) fr.online = false
+                                Thread.sleep(15000)
+                            } catch (_: Exception) { break }
+                        }
+                    }
+
+                    while (presenceRunning && !s.isClosed) {
+                        val hdr = inp.readUnsignedByte()
+                        val rLen = readMqttVarInt(inp)
+                        val body = ByteArray(rLen)
+                        if (rLen > 0) inp.readFully(body)
+                        if ((hdr and 0xF0) == 0x30) {
+                            val bis = DataInputStream(ByteArrayInputStream(body))
+                            val tLen = bis.readUnsignedShort(); bis.skipBytes(tLen)
+                            val qos = (hdr ushr 1) and 0x03; if (qos > 0) bis.skipBytes(2)
+                            val rem = bis.available()
+                            if (rem > 0) {
+                                val raw = ByteArray(rem); bis.readFully(raw)
+                                val parts = String(raw, Charsets.UTF_8).split("|")
+                                if (parts.size >= 4) {
+                                    val fid = parts[0]; val fnick = parts[1]; val froom = parts[2]; val fbrk = parts[3].toIntOrNull() ?: 0
+                                    for (fr in profiles.active.friends) {
+                                        if (fr.friendId.equals(fid, ignoreCase = true)) {
+                                            fr.nick = fnick.ifBlank { fr.nick }
+                                            fr.roomCode = froom
+                                            fr.brokerIdx = fbrk
+                                            fr.online = true
+                                            fr.lastSeenMs = System.currentTimeMillis()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    try { pSock?.close() } catch (_: Exception) {}
+                    try { Thread.sleep(10000) } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     fun startLanHost() {
         stop()
         isHost = true; isConnected = true; isOnlineRelay = false; roomCode = "LAN"
@@ -364,11 +467,11 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             1 -> { // POS + ANIM + SLEEP
                 val nick = inp.readUTF(); val skin = inp.readUTF()
                 val x = inp.readFloat(); val y = inp.readFloat(); val z = inp.readFloat()
-                val fr = inp.readBoolean(); val atk = inp.readFloat(); val slp = inp.readBoolean(); val hId = inp.readInt()
+                val fr = inp.readBoolean(); val atk = inp.readFloat(); val slp = inp.readBoolean(); val hId = inp.readInt(); val rHp = inp.readFloat(); val rMaxHp = inp.readFloat()
                 val rp = remotePlayers.computeIfAbsent(peerKey) { RemotePlayer(peerKey, nick, skin, x, y, z, fr) }
                 val d = hypot((x - rp.x).toDouble(), (y - rp.y).toDouble()).toFloat()
                 rp.nick = nick; rp.skinId = skin; rp.x = x; rp.y = y; rp.z = z
-                rp.facingRight = fr; rp.attackAnim = atk; rp.isSleeping = slp; rp.heldId = hId
+                rp.facingRight = fr; rp.attackAnim = atk; rp.isSleeping = slp; rp.heldId = hId; rp.hp = rHp; rp.maxHp = rMaxHp
                 rp.lastSeenMs = System.currentTimeMillis()
                 if (d > 0.01f) rp.walkAnim += d * 4.5f
             }
@@ -461,7 +564,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
         }
     }
 
-    fun sendPos(x: Float, y: Float, z: Float, facingRight: Boolean, skinId: String, attackAnim: Float, isSleeping: Boolean, heldId: Int) {
+    fun sendPos(x: Float, y: Float, z: Float, facingRight: Boolean, skinId: String, attackAnim: Float, isSleeping: Boolean, heldId: Int, hp: Float, maxHp: Float) {
         if (!isConnected) return
         val now = System.currentTimeMillis()
         remotePlayers.entries.removeIf { now - it.value.lastSeenMs > 12000L }
@@ -471,7 +574,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 publishOnlinePacket { p ->
                     p.writeByte(1); p.writeUTF(localNick); p.writeUTF(skinId)
                     p.writeFloat(x); p.writeFloat(y); p.writeFloat(z)
-                    p.writeBoolean(facingRight); p.writeFloat(attackAnim); p.writeBoolean(isSleeping); p.writeInt(heldId)
+                    p.writeBoolean(facingRight); p.writeFloat(attackAnim); p.writeBoolean(isSleeping); p.writeInt(heldId); p.writeFloat(hp); p.writeFloat(maxHp)
                 }
             } else {
                 val targets = if (isHost) clientStreams else listOfNotNull(clientOut)
@@ -480,7 +583,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                         synchronized(o) {
                             o.writeByte(1); o.writeUTF(localNick); o.writeUTF(skinId)
                             o.writeFloat(x); o.writeFloat(y); o.writeFloat(z)
-                            o.writeBoolean(facingRight); o.writeFloat(attackAnim); o.writeBoolean(isSleeping); o.writeInt(heldId)
+                            o.writeBoolean(facingRight); o.writeFloat(attackAnim); o.writeBoolean(isSleeping); o.writeInt(heldId); o.writeFloat(hp); o.writeFloat(maxHp)
                             o.flush()
                         }
                     } catch (_: Exception) {}

@@ -128,6 +128,23 @@ pub fn build_iso_frame(
         }
     };
 
+    let is_explored_fast = |wx: i32, wy: i32| -> bool {
+        let (cx, lx) = chunk_coord(wx);
+        let (cy, ly) = chunk_coord(wy);
+        let ddx = cx - base_cx + 2;
+        let ddy = cy - base_cy + 2;
+        if !(0..5).contains(&ddx) || !(0..5).contains(&ddy) {
+            return false;
+        }
+        if let Some(ptr) = grid[(ddy * 5 + ddx) as usize] {
+            let bit = ly * 16 + lx;
+            unsafe { ((*ptr).explored[bit >> 6] & (1u64 << (bit & 63))) != 0 }
+        } else {
+            false
+        }
+    };
+    let use_fog = is_cutaway && p_z < 135;
+
     let z_min = 0.max(p_z - 6);
     let z_max = slice_z.clamp(1, MAX_Z_I32 - 1);
     let min_sum = (p_gx - view_r) + (p_gy - view_r);
@@ -167,6 +184,7 @@ pub fn build_iso_frame(
                 && (gx + gy > p_gx + p_gy)
                 && (gx + gy <= p_gx + p_gy + 4)
                 && ((gx - gy) - (p_gx - p_gy)).abs() <= 2;
+            let fogged = use_fog && !is_explored_fast(gx, gy);
 
             for gz in z_min..=z_max {
                 let b_id = get_fast(gx, gy, gz);
@@ -187,6 +205,7 @@ pub fn build_iso_frame(
                 }
 
                 if def.is_prop {
+                    if fogged { continue; }
                     if prop_count < max_props {
                         let pi = prop_count * 8;
                         let a = if occludes_hero && gz >= p_z { 0.38 } else { 1.0 };
@@ -239,7 +258,7 @@ pub fn build_iso_frame(
                     1.0
                 };
 
-                let top_col = if is_cut_cap {
+                let top_col = if is_cut_cap || fogged {
                     cut_void_bits
                 } else if def.is_foliage {
                     pack_color(grass_r, grass_g, grass_b, alpha)
@@ -249,7 +268,7 @@ pub fn build_iso_frame(
                     pack_color(1.0, 1.0, 1.0, alpha)
                 };
 
-                let left_col = if def.is_foliage && b_id == 6 {
+                let left_col = if fogged { cut_void_bits } else if def.is_foliage && b_id == 6 {
                     pack_color(grass_r * 0.86, grass_g * 0.86, grass_b * 0.90, alpha)
                 } else if def.is_liquid {
                     pack_color(0.75, 0.80, 0.95, alpha)
@@ -257,7 +276,7 @@ pub fn build_iso_frame(
                     pack_color(0.84, 0.85, 0.90, alpha)
                 };
 
-                let right_col = if def.is_foliage && b_id == 6 {
+                let right_col = if fogged { cut_void_bits } else if def.is_foliage && b_id == 6 {
                     pack_color(grass_r * 0.66, grass_g * 0.66, grass_b * 0.74, alpha)
                 } else if def.is_liquid {
                     pack_color(0.58, 0.65, 0.85, alpha)

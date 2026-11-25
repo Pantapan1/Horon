@@ -1,7 +1,10 @@
 package com.voxelhorizon.nativegame
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -29,14 +32,27 @@ object GamepadBridge {
 }
 
 class AndroidLauncher : AndroidApplication() {
+    private var gameInstance: VoxelHorizonGame? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Запрос разрешений на память и уведомления при первом запуске!
+        requestFirstLaunchPermissions()
 
         val storageRoot = File(getExternalFilesDir(null) ?: filesDir, "VoxelHorizon")
         storageRoot.mkdirs()
         File(storageRoot, "worlds").mkdirs()
         File(storageRoot, "mods").mkdirs()
+
+        // Зеркальная папка в Documents/VoxelHorizon (сохраняет профили и миры при переустановке!)
+        val publicMirror = try {
+            val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+            File(docs, "VoxelHorizon").also { it.mkdirs() }
+        } catch (_: Exception) { null }
+
+        PlatformBridge.init(this, publicMirror)
 
         val config = AndroidApplicationConfiguration().apply {
             useAccelerometer = false
@@ -47,8 +63,38 @@ class AndroidLauncher : AndroidApplication() {
             r = 8; g = 8; b = 8; a = 8
             depth = 24
         }
-        initialize(VoxelHorizonGame(storageRoot), config)
+        val game = VoxelHorizonGame(storageRoot)
+        gameInstance = game
+        initialize(game, config)
         applyImmersiveFullscreen()
+    }
+
+    private fun requestFirstLaunchPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val needed = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                needed += Manifest.permission.POST_NOTIFICATIONS
+            }
+            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                needed += Manifest.permission.READ_MEDIA_IMAGES
+            }
+        } else {
+            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                needed += Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                needed += Manifest.permission.WRITE_EXTERNAL_STORAGE
+            }
+        }
+        if (needed.isNotEmpty()) {
+            requestPermissions(needed.toTypedArray(), 901)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        PlatformBridge.scheduleComeBackReminder(20)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

@@ -257,3 +257,42 @@ pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeBuildIs
         }
     }
 }
+
+#[no_mangle]
+pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeRevealFog<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    x: jint,
+    y: jint,
+    rad: jint,
+) {
+    with_world(|w| w.reveal_fog(x, y, rad));
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeFindElevatorZ<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    x: jint,
+    y: jint,
+    cur_z: jint,
+) -> jint {
+    with_world(|w| w.find_elevator_z(x, y, cur_z))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeSampleMinimap<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    cx: jint,
+    cy: jint,
+    step: jint,
+    size: jint,
+    out_rgba: JByteBuffer<'local>,
+) {
+    unsafe {
+        if let Some(buf) = buf_as_i32_mut(&env, &out_rgba) {
+            with_world(|w| w.sample_minimap(cx, cy, step, size, buf));
+        }
+    }
+}

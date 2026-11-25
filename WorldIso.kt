@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
+import java.nio.ByteBuffer
 import kotlin.random.Random
 
 data class SlotItem(var id: Int, var count: Int)
@@ -144,10 +145,14 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         if (id == 61) registerWaystone(wx, wy, wz)
         if (old == 65 && id != 65) signTexts.remove(blockKey(wx, wy, wz))
         RustEngine.nativeSetBlock(wx, wy, wz, id)
+        if (id in intArrayOf(37, 59, 60, 72)) RustEngine.nativeRevealFog(wx, wy, 7)
         modifications[blockKey(wx, wy, wz)] = id
     }
 
     fun hasRoofAbove(wx: Int, wy: Int, pz: Int): Boolean = RustEngine.nativeHasRoofAbove(wx, wy, pz)
+    fun revealFog(wx: Int, wy: Int, rad: Int) = RustEngine.nativeRevealFog(wx, wy, rad)
+    fun findElevatorZ(wx: Int, wy: Int, curZ: Int): Int = RustEngine.nativeFindElevatorZ(wx, wy, curZ)
+    fun sampleMinimap(cx: Int, cy: Int, step: Int, size: Int, outRgba: ByteBuffer) = RustEngine.nativeSampleMinimap(cx, cy, step, size, outRgba)
 
     fun applySeasonalEnvironmentStep(season: Season, seasonProgress: Float, px: Int, py: Int) {
         RustEngine.nativeApplySeasonalStep(season.ordinal, seasonProgress, px, py, Random.nextInt())
