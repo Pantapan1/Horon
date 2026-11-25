@@ -101,7 +101,7 @@ class PlayerState {
         var rem = countIn
         for (i in 0 until INV_SIZE) {
             val s = slots[i]
-            if (s != null && s.id == id && s.count < 64) {
+            if (s != null && s.id == id && s.count < 64 && (BlockRegistry.items[id]?.maxDurability ?: 0) <= 0) {
                 val add = minOf(64 - s.count, rem)
                 s.count += add; rem -= add
                 if (rem <= 0) return true
@@ -153,6 +153,48 @@ class PlayerState {
                 rem -= take
             }
         }
+    }
+
+    fun getEffectiveDurability(s: SlotItem): Int {
+        val maxD = BlockRegistry.items[s.id]?.maxDurability ?: 0
+        if (maxD <= 0) return -1
+        return if (s.durability < 0) maxD else s.durability.coerceIn(0, maxD)
+    }
+
+    fun damageSlotDurability(slotIdx: Int, amount: Int = 1, unbreakingLvl: Int = 0): String? {
+        if (creative || slotIdx !in 0 until INV_SIZE) return null
+        val s = slots[slotIdx] ?: return null
+        val def = BlockRegistry.items[s.id] ?: return null
+        if (def.maxDurability <= 0) return null
+        if (unbreakingLvl > 0 && Random.nextFloat() < (unbreakingLvl * 0.14f).coerceAtMost(0.75f)) return null
+        val cur = if (s.durability < 0) def.maxDurability else s.durability
+        val next = cur - amount
+        if (next <= 0) {
+            slots[slotIdx] = null
+            return def.name
+        }
+        s.durability = next
+        return null
+    }
+
+    fun repairAllEquipment(): Int {
+        var repaired = 0
+        for (s in slots) {
+            if (s == null) continue
+            val maxD = BlockRegistry.items[s.id]?.maxDurability ?: 0
+            if (maxD > 0 && s.durability >= 0 && s.durability < maxD) {
+                s.durability = maxD
+                repaired++
+            }
+        }
+        offhand?.let { oh ->
+            val maxD = BlockRegistry.items[oh.id]?.maxDurability ?: 0
+            if (maxD > 0 && oh.durability >= 0 && oh.durability < maxD) {
+                oh.durability = maxD
+                repaired++
+            }
+        }
+        return repaired
     }
 
     fun swapWithOffhand() {

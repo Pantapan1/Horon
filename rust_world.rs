@@ -119,7 +119,7 @@ pub fn build_block_lut() -> [BlockMeta; 256] {
     set(35, true,  true,  true,  false, false, false, false, false,  4, 14,   0.0, 0,        0xC68232);
     set(36, true,  false, false, false, false, false, false, true,  20, 20, 120.0, 0x34E86C, 0x2EE86A);
     set(37, false, true,  true,  false, false, false, false, false, -1, -1, 280.0, 0xFFB844, 0xFFB834);
-    set(38, true,  true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xD82838);
+    set(38, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xD82838);
     set(39, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x5C5042);
 
     // Expansion blocks (40..55)
@@ -920,34 +920,23 @@ impl RustWorld {
         }
     }
 
-    pub fn pick_iso_block(&mut self, wx_s: f32, wy_s: f32, p_gx: i32, p_gy: i32, pz: i32, slice_z: i32, is_cutaway: bool) -> (i32, i32, i32, u8) {
+    pub fn pick_iso_block(&mut self, wx_s: f32, wy_s: f32, _p_gx: i32, _p_gy: i32, pz: i32, slice_z: i32, _is_cutaway: bool) -> (i32, i32, i32, u8) {
         let z_top = (MAX_Z_I32 - 1).min(slice_z);
         let z_bot = 1.max(pz - 6);
-        let is_occluder = |gx: i32, gy: i32, gz: i32| -> bool {
-            !is_cutaway
-                && gz >= pz
-                && (gx + gy > p_gx + p_gy)
-                && (gx + gy <= p_gx + p_gy + 5)
-                && ((gx - gy) - (p_gx - p_gy)).abs() <= 3
-        };
         for gz in (z_bot..=z_top).rev() {
             let adj_top = wy_s - (gz + 1) as f32 * ZH;
             let gx_t = (0.5 * (wx_s / TW - adj_top / TH)).round() as i32;
             let gy_t = (0.5 * (-adj_top / TH - wx_s / TW)).round() as i32;
-            if !is_occluder(gx_t, gy_t, gz) {
-                let id_t = self.get_block(gx_t, gy_t, gz);
-                if id_t > 0 && !self.lut[id_t as usize].is_liquid {
-                    return (gx_t, gy_t, gz, id_t);
-                }
+            let id_t = self.get_block(gx_t, gy_t, gz);
+            if id_t > 0 && !self.lut[id_t as usize].is_liquid {
+                return (gx_t, gy_t, gz, id_t);
             }
             let adj_mid = wy_s - (gz as f32 + 0.45) * ZH;
             let gx_m = (0.5 * (wx_s / TW - adj_mid / TH)).round() as i32;
             let gy_m = (0.5 * (-adj_mid / TH - wx_s / TW)).round() as i32;
-            if !is_occluder(gx_m, gy_m, gz) {
-                let id_m = self.get_block(gx_m, gy_m, gz);
-                if id_m > 0 && !self.lut[id_m as usize].is_liquid {
-                    return (gx_m, gy_m, gz, id_m);
-                }
+            let id_m = self.get_block(gx_m, gy_m, gz);
+            if id_m > 0 && !self.lut[id_m as usize].is_liquid {
+                return (gx_m, gy_m, gz, id_m);
             }
         }
         let adj_p = wy_s - pz as f32 * ZH;

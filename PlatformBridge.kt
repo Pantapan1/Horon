@@ -28,8 +28,8 @@ import java.net.URL
 import kotlin.concurrent.thread
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.6.0"
-    const val CURRENT_TAG = "v6.6-rust-latest"
+    const val CURRENT_VERSION = "6.8.0"
+    const val CURRENT_TAG = "v6.8-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
     const val APK_PROVIDER_URI = "content://com.voxelhorizon.nativegame.apkprovider/voxelhorizon_update.apk"

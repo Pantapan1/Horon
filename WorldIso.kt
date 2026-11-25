@@ -14,7 +14,7 @@ import kotlin.math.abs
 import java.nio.ByteBuffer
 import kotlin.random.Random
 
-data class SlotItem(var id: Int, var count: Int)
+data class SlotItem(var id: Int, var count: Int, var durability: Int = -1)
 
 data class FurnaceState(
     var input: SlotItem? = null,
@@ -80,8 +80,11 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         val chKey = blockKey(1, 4, sz)
         if (!chests.containsKey(chKey)) {
             val stChest = arrayOfNulls<SlotItem>(27)
-            stChest[0] = SlotItem(101, 12); stChest[1] = SlotItem(148, 1); stChest[2] = SlotItem(136, 3); stChest[3] = SlotItem(137, 2)
-            stChest[4] = SlotItem(56, 16); stChest[5] = SlotItem(61, 1); stChest[6] = SlotItem(132, 1)
+            stChest[0] = SlotItem(101, 6)  // Уголь
+            stChest[1] = SlotItem(114, 4)  // Хлеб
+            stChest[2] = SlotItem(56, 6)   // Лестницы
+            stChest[4] = SlotItem(241, 2)  // Бинты
+            stChest[6] = SlotItem(143, 3)  // Пшеница
             chests[chKey] = stChest
         }
     }
@@ -102,20 +105,51 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         val key = blockKey(x, y, z)
         return chests.computeIfAbsent(key) {
             val arr = arrayOfNulls<SlotItem>(27)
-            // Naturally generated dungeon / abandoned mine chests automatically contain treasure!
+            // Разнообразный процедурный лут в природных сундуках (без гор алмазов и рубинов на старте!)
             if (!modifications.containsKey(key) && !(x == 1 && y == 4 && z == 142)) {
                 val h = abs(x * 73856093 xor y * 19349663 xor z * 83492791)
-                if (z < 100) {
-                    arr[0] = SlotItem(104, 2 + (h % 2))
-                    arr[1] = SlotItem(141, 3)
-                    arr[2] = SlotItem(137, 1)
-                    arr[3] = SlotItem(56, 8)
-                    arr[4] = SlotItem(142, 2)
+                val theme = h % 5
+                if (z < 48) {
+                    // Глубинная сокровищница (Z < 48): редкие самоцветы и зелья
+                    arr[1] = SlotItem(if (h % 2 == 0) 104 else 142, 1)
+                    arr[3] = SlotItem(141, 1 + (h % 2))
+                    arr[5] = SlotItem(103, 2 + (h % 3))
+                    arr[7] = SlotItem(242, 1)
+                    arr[11] = SlotItem(201, 4 + (h % 5))
+                    arr[14] = SlotItem(249, 1)
+                } else if (z < 115) {
+                    // Шахтёрские и инженерные ящики (Z = 48..114)
+                    when (theme) {
+                        0 -> { arr[0] = SlotItem(37, 8 + (h % 8)); arr[2] = SlotItem(102, 2 + (h % 3)); arr[5] = SlotItem(56, 8); arr[8] = SlotItem(241, 2) }
+                        1 -> { arr[1] = SlotItem(185, 6 + (h % 6)); arr[4] = SlotItem(140, 3 + (h % 4)); arr[6] = SlotItem(101, 5 + (h % 5)); arr[9] = SlotItem(137, 1) }
+                        2 -> { arr[0] = SlotItem(201, 4 + (h % 5)); arr[3] = SlotItem(81, 2); arr[5] = SlotItem(86, 2); arr[7] = SlotItem(102, 2); arr[10] = SlotItem(202, 1) }
+                        3 -> { arr[1] = SlotItem(141, 1 + (h % 2)); arr[4] = SlotItem(103, 1 + (h % 3)); arr[6] = SlotItem(115, 2); arr[12] = SlotItem(235, 1) }
+                        else -> { arr[0] = SlotItem(101, 8); arr[2] = SlotItem(145, 3 + (h % 4)); arr[5] = SlotItem(244, 1); arr[8] = SlotItem(124, 6) }
+                    }
                 } else {
-                    arr[0] = SlotItem(104, 2)
-                    arr[1] = SlotItem(118, 3)
-                    arr[2] = SlotItem(138, 2)
-                    arr[3] = SlotItem(131, 1)
+                    // Поверхностные деревни и руины (5 разных тематик!)
+                    when (theme) {
+                        0 -> { // Фермерский амбар
+                            arr[0] = SlotItem(114, 3 + (h % 3)); arr[2] = SlotItem(205, 3 + (h % 4)); arr[4] = SlotItem(206, 3 + (h % 4))
+                            arr[6] = SlotItem(247, 4); arr[9] = SlotItem(220, 1); arr[11] = SlotItem(203, 1)
+                        }
+                        1 -> { // Деревенский погреб и сладости
+                            arr[1] = SlotItem(113, 3 + (h % 4)); arr[3] = SlotItem(212, 4); arr[5] = SlotItem(218, 2)
+                            arr[7] = SlotItem(223, 1); arr[10] = SlotItem(136, 2); arr[13] = SlotItem(118, 1 + (h % 2))
+                        }
+                        2 -> { // Охотничий привал
+                            arr[0] = SlotItem(124, 6 + (h % 6)); arr[2] = SlotItem(158, 2 + (h % 3)); arr[4] = SlotItem(160, 3)
+                            arr[6] = SlotItem(115, 2); arr[8] = SlotItem(150, 1); arr[12] = SlotItem(241, 2)
+                        }
+                        3 -> { // Лавка ремесленника
+                            arr[1] = SlotItem(140, 3 + (h % 3)); arr[3] = SlotItem(102, 1 + (h % 2)); arr[5] = SlotItem(60, 2)
+                            arr[7] = SlotItem(15, 4); arr[9] = SlotItem(65, 2); arr[11] = SlotItem(245, 1)
+                        }
+                        else -> { // Тайник путешественника
+                            arr[0] = SlotItem(103, 1 + (h % 2)); arr[2] = SlotItem(118, 1 + (h % 2)); arr[4] = SlotItem(159, 2 + (h % 3))
+                            arr[6] = SlotItem(251, 2); arr[8] = SlotItem(138, 1); arr[10] = SlotItem(246, 1)
+                        }
+                    }
                 }
             }
             arr
@@ -167,15 +201,15 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         try {
             file.parentFile?.mkdirs()
             DataOutputStream(GZIPOutputStream(BufferedOutputStream(FileOutputStream(file)))).use { out ->
-                out.writeInt(63)
+                out.writeInt(67)
                 out.writeInt(seed); out.writeUTF(dimension)
                 out.writeFloat(player.x); out.writeFloat(player.y); out.writeFloat(player.z)
                 out.writeFloat(player.hp); out.writeFloat(player.maxHp); out.writeFloat(player.food)
                 out.writeInt(player.weaponUpgradeLvl); out.writeInt(player.toolUpgradeLvl)
                 out.writeBoolean(player.creative)
                 out.writeInt(entities.dayCount); out.writeInt(entities.seasonLengthDays); out.writeFloat(entities.worldTime)
-                for (i in 0 until PlayerState.INV_SIZE) { out.writeInt(player.slots[i]?.id ?: 0); out.writeInt(player.slots[i]?.count ?: 0) }
-                out.writeInt(player.offhand?.id ?: 0); out.writeInt(player.offhand?.count ?: 0)
+                for (i in 0 until PlayerState.INV_SIZE) { out.writeInt(player.slots[i]?.id ?: 0); out.writeInt(player.slots[i]?.count ?: 0); out.writeInt(player.slots[i]?.durability ?: -1) }
+                out.writeInt(player.offhand?.id ?: 0); out.writeInt(player.offhand?.count ?: 0); out.writeInt(player.offhand?.durability ?: -1)
                 for (i in 0 until 4) out.writeInt(player.armor[i])
                 out.writeInt(modifications.size); for ((k, v) in modifications) { out.writeUTF(k); out.writeInt(v) }
                 out.writeInt(chests.size)
@@ -196,7 +230,7 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         return try {
             DataInputStream(GZIPInputStream(BufferedInputStream(FileInputStream(file)))).use { inp ->
                 val ver = inp.readInt()
-                if (ver != 52 && ver != 54 && ver != 63) return false
+                if (ver != 52 && ver != 54 && ver != 63 && ver != 67) return false
                 val s = inp.readInt(); val dim = inp.readUTF()
                 player.x = inp.readFloat(); player.y = inp.readFloat(); player.z = inp.readFloat()
                 player.hp = inp.readFloat(); player.maxHp = inp.readFloat(); player.food = inp.readFloat()
@@ -207,10 +241,12 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
                 val slotCnt = if (ver >= 63) PlayerState.INV_SIZE else 36
                 for (i in 0 until slotCnt) {
                     val id = inp.readInt(); val cnt = inp.readInt()
-                    if (i < PlayerState.INV_SIZE) player.slots[i] = if (id > 0 && cnt > 0) SlotItem(id, cnt) else null
+                    val dur = if (ver >= 67) inp.readInt() else -1
+                    if (i < PlayerState.INV_SIZE) player.slots[i] = if (id > 0 && cnt > 0) SlotItem(id, cnt, dur) else null
                 }
                 val ohId = inp.readInt(); val ohCnt = inp.readInt()
-                player.offhand = if (ohId > 0 && ohCnt > 0) SlotItem(ohId, ohCnt) else null
+                val ohDur = if (ver >= 67) inp.readInt() else -1
+                player.offhand = if (ohId > 0 && ohCnt > 0) SlotItem(ohId, ohCnt, ohDur) else null
                 for (i in 0 until 4) player.armor[i] = inp.readInt()
                 modifications.clear(); val mc = inp.readInt(); for (i in 0 until mc) modifications[inp.readUTF()] = inp.readInt()
                 chests.clear(); val cc = inp.readInt()

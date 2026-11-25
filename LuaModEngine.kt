@@ -38,7 +38,7 @@ class LuaModEngine(private val modsDir: File, private val game: VoxelHorizonGame
         mods += LuaModEntry(
             "builtin_speed", "Режим Спидраннера (Lua)", "Ускоряет бег героя на +40%", false,
             """
-            VH.setSpeed(7.4)
+            VH.setSpeed(4.5)
             VH.toast("Lua-мод: Спидраннер активен!")
             """.trimIndent()
         )
@@ -74,7 +74,7 @@ class LuaModEngine(private val modsDir: File, private val game: VoxelHorizonGame
 
     fun hotReload() {
         hooks.clear()
-        game.baseWalkSpeed = 5.0f
+        game.baseWalkSpeed = 3.35f
         scanExternalMods()
 
         val g = JsePlatform.standardGlobals()
