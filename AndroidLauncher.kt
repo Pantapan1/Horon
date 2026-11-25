@@ -41,16 +41,30 @@ class AndroidLauncher : AndroidApplication() {
         // Запрос разрешений на память и уведомления при первом запуске!
         requestFirstLaunchPermissions()
 
-        val storageRoot = File(getExternalFilesDir(null) ?: filesDir, "VoxelHorizon")
-        storageRoot.mkdirs()
-        File(storageRoot, "worlds").mkdirs()
-        File(storageRoot, "mods").mkdirs()
-
-        // Зеркальная папка в Documents/VoxelHorizon (сохраняет профили и миры при переустановке!)
         val publicMirror = try {
             val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            File(docs, "VoxelHorizon").also { it.mkdirs() }
+            File(docs, "VoxelHorizon").also { it.mkdirs(); File(it, "worlds").mkdirs(); File(it, "mods").mkdirs() }
         } catch (_: Exception) { null }
+
+        val canWriteDocs = try {
+            if (publicMirror != null) {
+                val probe = File(publicMirror, ".probe")
+                probe.writeText("ok"); probe.delete(); true
+            } else false
+        } catch (_: Exception) { false }
+
+        val appRoot = File(getExternalFilesDir(null) ?: filesDir, "VoxelHorizon").also {
+            it.mkdirs(); File(it, "worlds").mkdirs(); File(it, "mods").mkdirs()
+        }
+        val storageRoot = if (canWriteDocs && publicMirror != null) {
+            try {
+                File(appRoot, "worlds").listFiles()?.forEach { f ->
+                    val dst = File(File(publicMirror, "worlds"), f.name)
+                    if (f.isFile && !dst.exists()) f.copyTo(dst)
+                }
+            } catch (_: Exception) {}
+            publicMirror
+        } else appRoot
 
         PlatformBridge.init(this, publicMirror)
 

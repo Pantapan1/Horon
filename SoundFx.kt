@@ -12,7 +12,8 @@ object SoundFx {
         dispose()
         val names = listOf(
             "mine", "break", "hit", "hurt", "step", "splash",
-            "chest", "craft", "pickup", "levelup", "boss", "fish"
+            "chest", "craft", "pickup", "levelup", "boss", "fish",
+            "enchant", "minecart", "achieve", "door", "wall_torch", "hoe", "piston", "boat"
         )
         for (n in names) {
             try {

@@ -180,12 +180,12 @@ pub fn build_block_lut() -> [BlockMeta; 256] {
     set(90, true,  false, false, false, false, false, false, false, 51, 58,   0.0, 0,        0x747A86); // Dispenser
     set(91, true,  false, false, false, false, false, false, false, 59, 59,   0.0, 0,        0x845234); // Note Block
     set(92, true,  false, false, false, false, false, false, false, 60, 60,   0.0, 0,        0x5A3A22); // Farmland
-    set(93, false, true,  false, false, false, false, false, false, 61, 61,   0.0, 0,        0xEE7E18); // Carrot Crop
-    set(94, false, true,  false, false, false, false, false, false, 62, 62,   0.0, 0,        0xD4A85C); // Potato Crop
-    set(95, false, true,  false, false, false, false, false, false, 63, 63,   0.0, 0,        0xE2242C); // Tomato Bush
-    set(96, false, true,  false, false, false, false, false, false, 64, 64,   0.0, 0,        0xF8CE30); // Corn Stalk
+    set(93, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xEE7E18); // 3D Crop Prop!
+    set(94, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xD4A85C); // 3D Crop Prop!
+    set(95, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xE2242C); // 3D Crop Prop!
+    set(96, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xF8CE30); // 3D Crop Prop!
     set(97, true,  false, false, false, false, false, false, false, 65, 65,   0.0, 0,        0x36A238); // Watermelon Block
-    set(98, false, true,  false, false, false, false, false, false, 66, 66,   0.0, 0,        0xEE2248); // Strawberry Patch
+    set(98, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xEE2248); // 3D Crop Prop!
 
     // Decor, Marble, Metals, Stained Glass & Planks (161..177)
     set(161, true, false, false, false, false, false, false, false, 68, 68,   0.0, 0,        0xE8EAF2); // Marble
@@ -207,6 +207,16 @@ pub fn build_block_lut() -> [BlockMeta; 256] {
     set(177, true, false, false, false, false, false, false, true,  82, 82,   0.0, 0,        0xE29828); // Nether Gold Ore
     set(178, true, false, false, false, false, false, false, false, 81, 81,   0.0, 0,        0xDEC88C); // Carved Sandstone
     set(179, true, false, false, false, false, false, false, false, 83, 83, 320.0, 0x38E2EE, 0x38E2EE); // Glow Crystal Block
+
+    // v6.6 Wall Torches, Redstone 2.0 (Hopper, Daylight Sensor, Rails) & Enchanting Table (180..187)
+    set(180, false, true,  true,  false, false, false, false, false, -1, -1, 290.0, 0xFFB844, 0xFFB834); // Wall Torch Left
+    set(181, false, true,  true,  false, false, false, false, false, -1, -1, 290.0, 0xFFB844, 0xFFB834); // Wall Torch Right
+    set(182, true,  true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x6E7686); // Hopper
+    set(183, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0x547AA8); // Daylight Sensor OFF
+    set(184, false, true,  true,  false, false, false, false, false, -1, -1, 130.0, 0xFFE278, 0xF6C648); // Daylight Sensor ON
+    set(185, false, true,  true,  false, false, false, false, false, -1, -1,   0.0, 0,        0xB4BCCB); // Rail
+    set(186, false, true,  true,  false, false, false, false, false, -1, -1, 130.0, 0xFF3A44, 0xF2C230); // Powered Rail
+    set(187, true,  true,  true,  false, false, false, false, false, -1, -1, 210.0, 0xB856FF, 0x9C38EE); // Enchanting Table
 
     lut
 }
@@ -626,6 +636,35 @@ impl RustWorld {
                 data[cidx(2, 4, 133)] = 37;
                 data[cidx(2, 3, 133)] = 12;
                 data[cidx(2, 5, 133)] = 48;
+            }
+
+            // Rare Underground Redstone Trap Temples (Z = 38..45)
+            let temple_hash = (cx.wrapping_mul(193) ^ cy.wrapping_mul(83) ^ self.seed).rem_euclid(100);
+            if (cx != 0 || cy != 0) && temple_hash == 17 {
+                let tz: usize = 40;
+                for lx in 3usize..=11 {
+                    for ly in 3usize..=11 {
+                        let edge = lx == 3 || lx == 11 || ly == 3 || ly == 11;
+                        data[cidx(lx, ly, tz)] = 167;
+                        for z in (tz + 1)..=(tz + 4) {
+                            data[cidx(lx, ly, z)] = if edge {
+                                if z == tz + 2 && (lx == 7 || ly == 7) { 179 } else { 167 }
+                            } else {
+                                0
+                            };
+                        }
+                        data[cidx(lx, ly, tz + 5)] = 167;
+                    }
+                }
+                data[cidx(7, 11, tz + 1)] = 172;
+                data[cidx(7, 11, tz + 2)] = 0;
+                data[cidx(7, 12, tz + 1)] = 83;
+                data[cidx(7, 9,  tz + 1)] = 83;
+                data[cidx(6, 9,  tz + 1)] = 79;
+                data[cidx(5, 9,  tz + 1)] = 90;
+                data[cidx(7, 6,  tz + 1)] = 35;
+                data[cidx(5, 6,  tz + 1)] = 187;
+                data[cidx(9, 6,  tz + 1)] = 60;
             }
 
             // Surface ruin dungeons

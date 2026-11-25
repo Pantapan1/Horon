@@ -1,6 +1,8 @@
 package com.voxelhorizon.nativegame
 
 import android.app.AlarmManager
+import android.app.DownloadManager
+import android.os.Environment
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -26,8 +28,8 @@ import java.net.URL
 import kotlin.concurrent.thread
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.5.0"
-    const val CURRENT_TAG = "v6.5-rust-latest"
+    const val CURRENT_VERSION = "6.6.0"
+    const val CURRENT_TAG = "v6.6-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
     const val APK_PROVIDER_URI = "content://com.voxelhorizon.nativegame.apkprovider/voxelhorizon_update.apk"
@@ -90,6 +92,30 @@ object PlatformBridge {
                 .build()
             nm.notify(id, notif)
         } catch (_: Exception) {}
+    }
+
+    fun backupWorldsToDocuments(storageRoot: File): String {
+        val dst = backupDir ?: return "Папка Documents недоступна"
+        return try {
+            val srcW = File(storageRoot, "worlds")
+            val dstW = File(dst, "worlds").also { it.mkdirs() }
+            var cnt = 0
+            srcW.listFiles()?.forEach { f ->
+                if (f.isFile && f.canonicalPath != File(dstW, f.name).canonicalPath) {
+                    f.copyTo(File(dstW, f.name), overwrite = true); cnt++
+                }
+            }
+            val srcM = File(storageRoot, "mods")
+            val dstM = File(dst, "mods").also { it.mkdirs() }
+            srcM.listFiles()?.forEach { f ->
+                if (f.isFile && f.canonicalPath != File(dstM, f.name).canonicalPath) {
+                    f.copyTo(File(dstM, f.name), overwrite = true)
+                }
+            }
+            if (cnt == 0) "Миры уже в Documents/VoxelHorizon!" else "Сохранено копий в Documents: $cnt"
+        } catch (e: Exception) {
+            "Ошибка копирования: ${e.message ?: "доступ"}"
+        }
     }
 
     fun openBrowserUrl(url: String) {
@@ -243,12 +269,12 @@ object PlatformBridge {
             try {
                 var curUrl = dlUrl
                 var conn: HttpURLConnection? = null
-                for (redir in 0 until 6) {
+                for (redir in 0 until 8) {
                     val c = (URL(curUrl).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 10000
-                        readTimeout = 20000
+                        connectTimeout = 15000
+                        readTimeout = 45000
                         instanceFollowRedirects = false
-                        setRequestProperty("User-Agent", "VoxelHorizon-Android-$CURRENT_VERSION")
+                        if (redir == 0) setRequestProperty("User-Agent", "VoxelHorizon-Android-$CURRENT_VERSION")
                     }
                     val status = c.responseCode
                     if (status in intArrayOf(301, 302, 303, 307, 308)) {
@@ -306,8 +332,22 @@ object PlatformBridge {
                 ctx.startActivity(installIntent)
             } catch (e: Exception) {
                 updateDownloading = false
-                updateStatusText = "Ошибка загрузки: ${e.message ?: "сеть"}"
-                onStatus("Ошибка загрузки — нажмите для перехода на GitHub")
+                try {
+                    val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+                    if (dm != null) {
+                        val req = DownloadManager.Request(Uri.parse(dlUrl))
+                            .setTitle("VoxelHorizon $updateTag")
+                            .setDescription("Загрузка обновления APK...")
+                            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "VoxelHorizon-$updateTag.apk")
+                        dm.enqueue(req)
+                        updateStatusText = "Скачивается в Downloads!"
+                        onStatus("Загрузка запущена в шторке (папка Downloads)!")
+                        return@thread
+                    }
+                } catch (_: Exception) {}
+                updateStatusText = "Нажмите GitHub для скачивания"
+                onStatus("Откройте GitHub для скачивания обновления")
             }
         }
     }

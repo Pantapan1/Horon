@@ -28,12 +28,14 @@ object SpriteArt {
 
     lateinit var propsTex: Texture
     lateinit var props: Array<TextureRegion>
+    lateinit var crackFrames: Array<TextureRegion>
     lateinit var shadowTex: Texture
     lateinit var glowTex: Texture
     lateinit var slashTex: TextureRegion
     lateinit var whitePx: Texture
+    var menuPanoramaTex: Texture? = null
+    var logoBannerTex: Texture? = null
 
-    // Crisp Pixel-Art 9-Patch UI frames (loaded from ui_pixel.png, Nearest filter!)
     lateinit var panelPatch: NinePatch
     lateinit var btnGreenPatch: NinePatch
     lateinit var btnPurplePatch: NinePatch
@@ -59,21 +61,36 @@ object SpriteArt {
         glowTex = buildRadialGlowTexture()
         slashTex = TextureRegion(buildSlashArcTexture())
 
-        // Pixel-Art 9-Patch UI Atlas (512x128, 64x64 tiles, 8px chunky pixel borders)
+        val pFile = Gdx.files.internal("menu_panorama.png")
+        if (pFile.exists()) {
+            menuPanoramaTex = Texture(pFile).apply {
+                setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest)
+                setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.ClampToEdge)
+                textures += this
+            }
+        }
+        val lFile = Gdx.files.internal("logo_banner.png")
+        if (lFile.exists()) {
+            logoBannerTex = Texture(lFile).apply {
+                setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest)
+                textures += this
+            }
+        }
+
         val uiTex = Texture(Gdx.files.internal("ui_pixel.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
         }
-        fun np(col: Int, row: Int, b: Int = 8) = NinePatch(TextureRegion(uiTex, col * 64, row * 64, 64, 64), b, b, b, b)
-        panelPatch        = np(0, 0, 10)
-        btnGreenPatch     = np(1, 0, 8)
-        btnPurplePatch    = np(2, 0, 8)
-        btnBluePatch      = np(3, 0, 8)
-        btnRedPatch       = np(4, 0, 8)
-        hotbarPatch       = np(5, 0, 8)
+        fun np(col: Int, row: Int, b: Int = 10) = NinePatch(TextureRegion(uiTex, col * 64, row * 64, 64, 64), b, b, b, b)
+        panelPatch        = np(0, 0, 12)
+        btnGreenPatch     = np(1, 0, 10)
+        btnPurplePatch    = np(2, 0, 10)
+        btnBluePatch      = np(3, 0, 10)
+        btnRedPatch       = np(4, 0, 10)
+        hotbarPatch       = np(5, 0, 10)
         slotPatch         = np(6, 0, 8)
         slotSelectedPatch = np(7, 0, 8)
         hudBadgePatch     = np(0, 1, 8)
-        pauseBtnPatch     = np(1, 1, 8)
+        pauseBtnPatch     = np(1, 1, 10)
         barFramePatch     = np(2, 1, 6)
         joyRingReg        = TextureRegion(uiTex, 3 * 64, 64, 64, 64)
         joyKnobReg        = TextureRegion(uiTex, 4 * 64, 64, 64, 64)
@@ -81,8 +98,12 @@ object SpriteArt {
         val hTex = Texture(Gdx.files.internal("sprites_heroes.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
         }
+        val hFrames = (hTex.height / 80).coerceIn(4, 8)
         SKINS_LIST.forEachIndexed { idx, sk ->
-            skinSprites[sk.id] = Array(4) { fr -> TextureRegion(hTex, idx * 64, fr * 80, 64, 80) }
+            skinSprites[sk.id] = Array(8) { fr ->
+                val srcRow = if (hFrames >= 8) fr else when (fr) { 0, 1 -> 0; 2, 3 -> 1; 4, 5 -> 2; 6 -> 1; else -> 3 }
+                TextureRegion(hTex, idx * 64, srcRow * 80, 64, 80)
+            }
         }
 
         val mTex = Texture(Gdx.files.internal("sprites_mobs.png")).apply {
@@ -92,21 +113,37 @@ object SpriteArt {
             "sheep", "cow", "pig", "chicken", "fox_pet", "zombie", "skeleton", "creeper",
             "spider", "enderman", "piglin", "blaze", "ghast", "inferno_lord", "sky_guardian",
             "deer", "boar", "wolf", "bee", "goblin", "slime", "mini_slime", "yeti",
-            "bat", "crystal_golem", "magma_slime", "mimic", "grove_guardian", "frost_titan", "depth_devourer", "trader"
+            "bat", "crystal_golem", "magma_slime", "mimic", "grove_guardian", "frost_titan",
+            "depth_devourer", "trader", "owl_pet", "golem_pet"
         )
-        mobOrder.forEachIndexed { idx, mId ->
-            val col = idx % 8; val rowBase = (idx / 8) * 2
-            mobSprites[mId] = arrayOf(
-                TextureRegion(mTex, col * 64, rowBase * 64, 64, 64),
-                TextureRegion(mTex, col * 64, (rowBase + 1) * 64, 64, 64)
-            )
+        if (mTex.width >= 2048) {
+            mobOrder.forEachIndexed { idx, mId ->
+                val x0 = (idx % 4) * 512
+                val y0 = (idx / 4) * 64
+                mobSprites[mId] = Array(8) { fr -> TextureRegion(mTex, x0 + fr * 64, y0, 64, 64) }
+            }
+        } else {
+            mobOrder.forEachIndexed { idx, mId ->
+                val col = idx % 8; val rowBase = (idx / 8) * 2
+                val f0 = TextureRegion(mTex, col * 64, rowBase * 64, 64, 64)
+                val f1 = TextureRegion(mTex, col * 64, (rowBase + 1) * 64, 64, 64)
+                mobSprites[mId] = Array(8) { fr -> if ((fr and 1) == 0) f0 else f1 }
+            }
         }
 
         propsTex = Texture(Gdx.files.internal("sprites_props.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
         }
-        props = Array(43) { i -> TextureRegion(propsTex, (i % 8) * 64, (i / 8) * 64, 64, 64) }
+        props = Array(62) { i -> TextureRegion(propsTex, (i % 8) * 64, (i / 8) * 64, 64, 64) }
         BlockRegistry.attachPropIcons(propsTex)
+
+        val cFile = Gdx.files.internal("block_cracks.png")
+        crackFrames = if (cFile.exists()) {
+            val cTex = Texture(cFile).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this }
+            Array(8) { fr -> TextureRegion(cTex, fr * 64, 0, 64, 64) }
+        } else {
+            Array(8) { TextureRegion(whitePx) }
+        }
     }
 
     private fun makeTex(pm: Pixmap, linear: Boolean = false): Texture {

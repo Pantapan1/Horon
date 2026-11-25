@@ -14,6 +14,7 @@ class RedstoneSystem {
     private val prevPoweredBlocks = HashSet<Triple<Int, Int, Int>>()
     private var evalTimer = 0f
     private var sparkTimer = 0f
+    private var hopperTimer = 0f
 
     fun pressButton(x: Int, y: Int, z: Int, world: WorldIso) {
         buttonTimers[Triple(x, y, z)] = 2.5f
@@ -80,7 +81,62 @@ class RedstoneSystem {
                     }
                 }
             }
+            val isNightNow = game.entities.dayFactor < 0.48f
+            for (dz in -2..2) for (dx in -8..8) for (dy in -8..8) {
+                val gx = px + dx; val gy = py + dy; val gz = pz + dz
+                if (gz !in 1 until WorldIso.MAX_Z) continue
+                val b = world.getBlock(gx, gy, gz)
+                if (b == 183 && isNightNow) game.setWorldBlock(gx, gy, gz, 184)
+                else if (b == 184 && !isNightNow) game.setWorldBlock(gx, gy, gz, 183)
+            }
             evaluateAround(px, py, pz, world, game, game.player, game.entities, null)
+        }
+
+        // Воронка (182): авто-сбор лута вокруг и загрузка в соседнюю Печь или Сундук!
+        hopperTimer += dt
+        if (hopperTimer >= 0.65f) {
+            hopperTimer = 0f
+            val adjDirs = arrayOf(Triple(1,0,0), Triple(-1,0,0), Triple(0,1,0), Triple(0,-1,0), Triple(0,0,-1), Triple(0,0,1))
+            for (dz in -2..2) for (dx in -7..7) for (dy in -7..7) {
+                val gx = px + dx; val gy = py + dy; val gz = pz + dz
+                if (gz !in 1 until WorldIso.MAX_Z) continue
+                if (world.getBlock(gx, gy, gz) != 182) continue
+                val drop = game.entities.drops.firstOrNull { hypot((it.x - (gx + 0.5f)).toDouble(), (it.y - (gy + 0.5f)).toDouble()) < 2.6 && abs(it.z - gz) < 2.2f }
+                    ?: continue
+                var stored = false
+                for ((ax, ay, az) in adjDirs) {
+                    val nx = gx + ax; val ny = gy + ay; val nz = gz + az
+                    if (nz !in 1 until WorldIso.MAX_Z) continue
+                    val nb = world.getBlock(nx, ny, nz)
+                    if (nb == 18) {
+                        val f = world.getFurnace(nx, ny, nz)
+                        if (BlockRegistry.smeltMap.containsKey(drop.itemId) && (f.input == null || f.input!!.id == drop.itemId)) {
+                            f.input = if (f.input == null) SlotItem(drop.itemId, drop.count) else SlotItem(drop.itemId, min(64, f.input!!.count + drop.count))
+                            stored = true; break
+                        } else if ((BlockRegistry.items[drop.itemId]?.fuelPower ?: 0f) > 0f && (f.fuel == null || f.fuel!!.id == drop.itemId)) {
+                            f.fuel = if (f.fuel == null) SlotItem(drop.itemId, drop.count) else SlotItem(drop.itemId, min(64, f.fuel!!.count + drop.count))
+                            stored = true; break
+                        }
+                    } else if (nb == 35 || nb == 52) {
+                        val ch = world.getChest(nx, ny, nz)
+                        val ex = ch.indexOfFirst { it != null && it.id == drop.itemId && it.count < 64 }
+                        val emp = ch.indexOfFirst { it == null }
+                        if (ex >= 0) {
+                            ch[ex]!!.count = min(64, ch[ex]!!.count + drop.count)
+                            if (game.netMp.isConnected) game.netMp.broadcastChest(nx, ny, nz, ch)
+                            stored = true; break
+                        } else if (emp >= 0) {
+                            ch[emp] = SlotItem(drop.itemId, drop.count)
+                            if (game.netMp.isConnected) game.netMp.broadcastChest(nx, ny, nz, ch)
+                            stored = true; break
+                        }
+                    }
+                }
+                if (stored) {
+                    game.entities.drops.remove(drop)
+                    game.entities.spawnRisingSpark(gx + 0.5f, gy + 0.5f, gz + 0.9f, 0x56E2FF, 5f)
+                }
+            }
         }
 
         // Rising glowing crimson sparks on powered Redstone wires & torches!
@@ -125,7 +181,7 @@ class RedstoneSystem {
         for (gz in zLo..zHi) for (gx in (cx - rad)..(cx + rad)) for (gy in (cy - rad)..(cy + rad)) {
             val b = world.getBlock(gx, gy, gz)
             val pos = Triple(gx, gy, gz)
-            val isSource = b == 76 || b == 82 || b == 84 || b == 86 || (b == 85 && isButtonActive(gx, gy, gz))
+            val isSource = b == 76 || b == 82 || b == 84 || b == 86 || b == 184 || (b == 85 && isButtonActive(gx, gy, gz))
             if (isSource) addSource(pos, 15)
         }
         customSources?.forEach { addSource(it, 15) }
@@ -151,7 +207,7 @@ class RedstoneSystem {
                     79, 80 -> addSource(nPos, pwr - 1)
                     87 -> addSource(nPos, 15) // Repeater boosts signal back to 15!
                     // Only directly adjacent (Manhattan 1) triggers consumers!
-                    77, 78, 57, 58, 172, 173, 26, 88, 89, 90, 91 -> {
+                    77, 78, 57, 58, 172, 173, 26, 88, 89, 90, 91, 186 -> {
                         if (abs(dx) + abs(dy) + abs(dz) == 1) {
                             if ((bestPower[nPos] ?: 0) < pwr - 1) bestPower[nPos] = pwr - 1
                         }
@@ -179,15 +235,15 @@ class RedstoneSystem {
                 80 -> if (!on) game.setWorldBlock(gx, gy, gz, 79)
                 77 -> if (on) game.setWorldBlock(gx, gy, gz, 78)
                 78 -> if (!on) game.setWorldBlock(gx, gy, gz, 77)
-                172 -> if (on) { game.setWorldBlock(gx, gy, gz, 173); SoundFx.play("chest", 0.55f) }
-                173 -> if (!on) { game.setWorldBlock(gx, gy, gz, 172); SoundFx.play("chest", 0.45f) }
-                57 -> if (risingEdge) { game.setWorldBlock(gx, gy, gz, 58); SoundFx.play("chest", 0.45f) }
+                172 -> if (on) { game.setWorldBlock(gx, gy, gz, 173); SoundFx.play("door", 0.6f) }
+                173 -> if (!on) { game.setWorldBlock(gx, gy, gz, 172); SoundFx.play("door", 0.5f) }
+                57 -> if (risingEdge) { game.setWorldBlock(gx, gy, gz, 58); SoundFx.play("door", 0.5f) }
                 58 -> if (!on && prevPoweredBlocks.contains(pos)) { game.setWorldBlock(gx, gy, gz, 57) }
                 26 -> if (risingEdge) game.triggerTntAt(gx, gy, gz)
                 88 -> if (on) {
                     // Piston extends! Pushes block above up by 1 OR launches player/mobs upward!
                     game.setWorldBlock(gx, gy, gz, 89)
-                    SoundFx.play("mine", 0.65f, 0.02f)
+                    SoundFx.play("piston", 0.65f, 0.04f)
                     if (gz + 2 < WorldIso.MAX_Z) {
                         val above = world.getBlock(gx, gy, gz + 1)
                         val above2 = world.getBlock(gx, gy, gz + 2)

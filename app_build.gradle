@@ -11,8 +11,8 @@ android {
         applicationId "com.voxelhorizon.nativegame"
         minSdk 24
         targetSdk 34
-        versionCode 65
-        versionName "6.5.0"
+        versionCode 66
+        versionName "6.6.0"
     }
 
     signingConfigs {

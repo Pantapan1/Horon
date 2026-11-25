@@ -45,6 +45,8 @@ class PlayerState {
     var speedBuffTimer = 0f
     var strengthBuffTimer = 0f
     var shieldBuffTimer = 0f
+    var ridingMode = "" // "", "minecart", "boat", "deer"
+    val golemBag = arrayOfNulls<SlotItem>(18)
     var parryTimer = 0f
     var dashCooldown = 0f
     var foodCooldown = 0f
@@ -186,7 +188,8 @@ data class MobEntity(
     var netTargetX: Float = x,
     var netTargetY: Float = y,
     var netTargetZ: Float = z,
-    var hasNetTarget: Boolean = false
+    var hasNetTarget: Boolean = false,
+    var fleeTimer: Float = 0f
 )
 
 data class DroppedItem(
@@ -228,6 +231,8 @@ class EntityAndWeatherManager {
     val dashGhosts = CopyOnWriteArrayList<DashGhost>()
     val floatingTexts = CopyOnWriteArrayList<FloatingText>()
     var foxPet: MobEntity? = null
+    var owlPet: MobEntity? = null
+    var golemPet: MobEntity? = null
 
     // Автономные сезоны (60 дней) + плавный 12-минутный цикл суток (во сне ускорение x2.6 -> ночь за ~2.3 мин!)
     var worldTime = 0.28f
@@ -256,7 +261,7 @@ class EntityAndWeatherManager {
 
     fun spawnMob(type: String, x: Float, y: Float, z: Float): MobEntity {
         val isBoss = type in setOf("inferno_lord", "sky_guardian", "grove_guardian", "frost_titan", "depth_devourer")
-        val hostile = type !in setOf("sheep", "cow", "pig", "chicken", "fox_pet", "deer", "boar", "wolf", "bee", "trader")
+        val hostile = type !in setOf("sheep", "cow", "pig", "chicken", "fox_pet", "deer", "boar", "wolf", "bee", "trader", "owl_pet", "golem_pet")
         val maxHp = when (type) {
             "depth_devourer" -> 220f; "frost_titan" -> 190f; "grove_guardian" -> 170f
             "inferno_lord" -> 160f; "sky_guardian" -> 145f
@@ -270,7 +275,7 @@ class EntityAndWeatherManager {
             "inferno_lord" -> "Повелитель Преисподней"; "sky_guardian" -> "Страж Небес"
             "grove_guardian" -> "Древний Страж Рощи"; "frost_titan" -> "Морозный Титан"; "depth_devourer" -> "Пожиратель Глубин"
             "sheep" -> "Овца"; "cow" -> "Корова"; "pig" -> "Свинья"; "chicken" -> "Курица"
-            "deer" -> "Олень"; "boar" -> "Кабан"; "wolf" -> "Волк"; "bee" -> "Пчела"; "trader" -> "Торговец"
+            "deer" -> "Олень"; "boar" -> "Кабан"; "wolf" -> "Волк"; "bee" -> "Пчела"; "trader" -> "Торговец"; "owl_pet" -> "Сова-разведчик"; "golem_pet" -> "Голем-сундук"
             "goblin" -> "Гоблин"; "slime" -> "Слайм"; "mini_slime" -> "Мини-Слайм"; "yeti" -> "Ледяной Йети"
             "bat" -> "Летучая Мышь"; "crystal_golem" -> "Кристальный Голем"; "magma_slime" -> "Магмовый Слайм"; "mimic" -> "Сундук-Мимик"
             "zombie" -> "Зомби"; "skeleton" -> "Скелет"; "creeper" -> "Крипер"; "spider" -> "Паук"
@@ -287,6 +292,18 @@ class EntityAndWeatherManager {
     fun toggleFoxPet(player: PlayerState): Boolean {
         if (foxPet != null) { foxPet = null; return false }
         foxPet = MobEntity(-99, "fox_pet", "Лисёнок", false, false, player.x + 1.1f, player.y + 0.5f, player.z, hp = 40f, maxHp = 40f, tamed = true)
+        return true
+    }
+
+    fun toggleOwlPet(player: PlayerState): Boolean {
+        if (owlPet != null) { owlPet = null; return false }
+        owlPet = MobEntity(-98, "owl_pet", "Сова-разведчик", false, false, player.x - 1.2f, player.y + 1.0f, player.z + 1.4f, hp = 999f, maxHp = 999f, tamed = true)
+        return true
+    }
+
+    fun toggleGolemPet(player: PlayerState): Boolean {
+        if (golemPet != null) { golemPet = null; return false }
+        golemPet = MobEntity(-97, "golem_pet", "Голем-сундук", false, false, player.x + 1.4f, player.y - 1.2f, player.z, hp = 999f, maxHp = 999f, tamed = true)
         return true
     }
 
@@ -397,10 +414,11 @@ class EntityAndWeatherManager {
     }
 
     fun damageMob(m: MobEntity, dmg: Float, kbX: Float, kbY: Float, frostHit: Boolean = false, onKill: (MobEntity) -> Unit) {
-        if (m.tamed || m.type == "trader") return
+        if (m.tamed || m.type in setOf("trader", "owl_pet", "golem_pet")) return
         m.hp -= dmg
         m.hurtFlash = 0.22f
         m.hurtSquash = 1.0f
+        if (!m.hostile) m.fleeTimer = 4.2f
         m.vx += kbX * 6f; m.vy += kbY * 6f
         if (m.type == "boar" || m.type == "wolf" || m.type == "bee") m.hostile = true
         if (m.type == "zombie") {
@@ -443,9 +461,9 @@ class EntityAndWeatherManager {
         if (world.dimension == "overworld") {
             // Полный цикл суток = 720 сек (12 мин: день 6 мин, ночь 6 мин).
             // Когда герой ЛЕЖИТ НА КРОВАТИ (isSleeping), время ускоряется в 2.6 раза -> ночь проходит за ~2.3 минуты!
-            val timeMult = if (player.isSleeping) 2.6f else 1.0f
+            val timeMult = if (player.isSleeping) 4.5f else 1.0f
             val prevTime = worldTime
-            worldTime += (dt * timeMult) / 720f
+            worldTime += (dt * timeMult) / 1440f
             if (worldTime >= 1f) { worldTime -= 1f; dayCount++ }
             dayFactor = max(0f, sin(worldTime * PI.toFloat() * 2f))
 
@@ -595,6 +613,34 @@ class EntityAndWeatherManager {
             }
         }
         foxPet?.let { tickAlly(it, 1.1f, 0.5f) }
+        owlPet?.let { ow ->
+            val gx = player.x - 1.1f + cos(ow.idlePhase * 0.7f) * 0.6f
+            val gy = player.y + 1.1f + sin(ow.idlePhase * 0.7f) * 0.6f
+            val gz = player.z + 1.45f
+            val d = hypot((gx - ow.x).toDouble(), (gy - ow.y).toDouble())
+            if (d > 14.0 || abs(gz - ow.z) > 8f) { ow.x = gx; ow.y = gy; ow.z = gz }
+            else {
+                ow.x += (gx - ow.x) * min(1f, dt * 4.5f)
+                ow.y += (gy - ow.y) * min(1f, dt * 4.5f)
+                ow.z += (gz - ow.z) * min(1f, dt * 4.5f)
+            }
+            ow.facingRight = ((gx - ow.x) - (gy - ow.y)) >= 0f
+            ow.walkAnim += dt * 10f
+        }
+        golemPet?.let { gl ->
+            val gx = player.x + 1.35f; val gy = player.y - 1.15f
+            val d = hypot((gx - gl.x).toDouble(), (gy - gl.y).toDouble()).toFloat()
+            if (d > 12f || abs(player.z - gl.z) > 4.5f) { gl.x = gx; gl.y = gy; gl.z = player.z }
+            else if (d > 1.1f) {
+                val ang = atan2((gy - gl.y).toDouble(), (gx - gl.x).toDouble()).toFloat()
+                val nx = gl.x + cos(ang) * 4.4f * dt; val ny = gl.y + sin(ang) * 4.4f * dt
+                val gz = world.getGroundZ(floor(nx).toInt(), floor(ny).toInt(), gl.z)
+                if (gz != null && abs(gz - gl.z) <= 1.5f) { gl.x = nx; gl.y = ny; gl.z += (gz - gl.z) * min(1f, dt * 10f) }
+                else { gl.x += (gx - gl.x) * dt * 2.5f; gl.y += (gy - gl.y) * dt * 2.5f; gl.z = player.z }
+                gl.facingRight = (cos(ang) - sin(ang)) >= 0f
+                gl.walkAnim += dt * 9f
+            }
+        }
 
         if (isNetClient) {
             val k = min(1f, dt * 12f)
@@ -684,7 +730,7 @@ class EntityAndWeatherManager {
                         curSeason == Season.SUMMER -> listOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf", "bee").random()
                         else -> listOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf").random()
                     }
-                    val wouldBeHostile = type !in setOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf", "bee", "trader")
+                    val wouldBeHostile = type !in setOf("sheep", "cow", "pig", "chicken", "deer", "boar", "wolf", "bee", "trader", "owl_pet", "golem_pet")
                     if (!wouldBeHostile || curHostiles < maxHostileMobs) {
                         spawnMob(type, sx + 0.5f, sy + 0.5f, spawnZ)
                     }
@@ -800,10 +846,16 @@ class EntityAndWeatherManager {
                         onHurtPlayer(hitDmg, m)
                     }
                 }
+            } else if (m.fleeTimer > 0f) {
+                m.fleeTimer = max(0f, m.fleeTimer - dt)
+                val fleeAng = atan2((m.y - player.y).toDouble(), (m.x - player.x).toDouble()).toFloat()
+                m.vx += (cos(fleeAng) * 3.6f * slowMult - m.vx) * min(1f, dt * 6f)
+                m.vy += (sin(fleeAng) * 3.6f * slowMult - m.vy) * min(1f, dt * 6f)
             } else {
-                if (m.aiTimer <= 0f) { m.aiTimer = 2f + Random.nextFloat() * 3f; m.aiAngle = Random.nextFloat() * PI.toFloat() * 2f }
-                m.vx += (cos(m.aiAngle) * 1.1f * slowMult - m.vx) * min(1f, dt * 4f)
-                m.vy += (sin(m.aiAngle) * 1.1f * slowMult - m.vy) * min(1f, dt * 4f)
+                if (m.aiTimer <= 0f) { m.aiTimer = 2.4f + Random.nextFloat() * 3.5f; m.aiAngle = Random.nextFloat() * PI.toFloat() * 2f }
+                val grazeSpd = if (m.aiTimer < 1.1f) 0f else 1.15f
+                m.vx += (cos(m.aiAngle) * grazeSpd * slowMult - m.vx) * min(1f, dt * 4f)
+                m.vy += (sin(m.aiAngle) * grazeSpd * slowMult - m.vy) * min(1f, dt * 4f)
             }
 
             val nx = m.x + m.vx * dt; val ny = m.y + m.vy * dt
@@ -814,7 +866,15 @@ class EntityAndWeatherManager {
                 val maxStep = if (m.type == "spider") 2.25f else 1.2f
                 if (gz != null && abs(gz - m.z) <= maxStep) {
                     m.x = nx; m.y = ny; m.z += (gz - m.z) * min(1f, dt * 10f)
-                } else m.aiAngle += 2.2f
+                } else {
+                    val gzx = world.getGroundZ(floor(nx).toInt(), floor(m.y).toInt(), m.z)
+                    val gzy = world.getGroundZ(floor(m.x).toInt(), floor(ny).toInt(), m.z)
+                    when {
+                        gzx != null && abs(gzx - m.z) <= maxStep -> { m.x = nx; m.z += (gzx - m.z) * min(1f, dt * 10f) }
+                        gzy != null && abs(gzy - m.z) <= maxStep -> { m.y = ny; m.z += (gzy - m.z) * min(1f, dt * 10f) }
+                        else -> m.aiAngle += 1.57f
+                    }
+                }
             }
             val screenDx = m.vx - m.vy
             if (abs(screenDx) > 0.1f) m.facingRight = screenDx > 0f

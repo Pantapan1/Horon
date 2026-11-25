@@ -22,6 +22,14 @@ data class WorldSlotInfo(
     val lastPlayedMs: Long
 )
 
+data class AchievementDef(
+    val id: String,
+    val title: String,
+    val desc: String,
+    val rewardEmeralds: Int,
+    val rewardXp: Int
+)
+
 data class ActiveQuest(
     val id: Int,
     val title: String,
@@ -40,7 +48,14 @@ data class PlayerProfile(
     var farmXp: Int = 0,
     val bestiaryKills: HashMap<String, Int> = HashMap(),
     val friends: CopyOnWriteArrayList<FriendEntry> = CopyOnWriteArrayList(),
-    var activeQuestIdx: Int = 0
+    var activeQuestIdx: Int = 0,
+    var cloakId: Int = 0,
+    var enchAutoSmelt: Boolean = false,
+    var enchFortune: Int = 0,
+    var enchFireAspect: Boolean = false,
+    var enchLifesteal: Boolean = false,
+    var enchHaste: Boolean = false,
+    val achievements: HashSet<String> = HashSet()
 ) {
     fun miningLevel(): Int = 1 + (miningXp / 50).coerceAtMost(19)
     fun combatLevel(): Int = 1 + (combatXp / 60).coerceAtMost(19)
@@ -52,6 +67,31 @@ class ProfileManager(private val storageRoot: File) {
     val profiles = mutableListOf<PlayerProfile>()
     var activeIndex = 0
     val worldSlots = mutableListOf<WorldSlotInfo>()
+
+    val achievementDefs = listOf(
+        AchievementDef("first_mine",    "Первая жила",         "Добудьте первую руду в шахте",                2, 40),
+        AchievementDef("deep_miner",    "На дне мира",         "Спуститесь ниже Z = 25",                      4, 90),
+        AchievementDef("redstone_eng",  "Инженер Редстоуна",   "Активируйте механизм на Редстоуне",           3, 70),
+        AchievementDef("wall_light",    "Уютный дом",          "Повесьте факел на стену",                     2, 40),
+        AchievementDef("farmer_pro",    "Мастер урожая",       "Вспашите грядку или вырастите урожай",        2, 50),
+        AchievementDef("golden_fish",   "Золотой улов",        "Поймайте рыбу на удочку",                     3, 60),
+        AchievementDef("enchanter",     "Чародей",             "Наложите зачарование на Столе Зачарований",   4, 80),
+        AchievementDef("boss_slayer",   "Покоритель Боссов",   "Победите любого из 5 Боссов",                 6, 150),
+        AchievementDef("pet_master",    "Повелитель питомцев", "Призовите Сову или Голема-носильщика",        3, 70),
+        AchievementDef("rider",         "Ветерок",             "Прокатитесь на Вагонетке, Лодке или Олене",   3, 60),
+        AchievementDef("builder_box",   "Архитектор",          "Постройте участок заливкой (Box Fill)",       2, 50),
+        AchievementDef("online_friend", "Вместе веселее",      "Добавьте друга или зайдите в мультиплеер",    3, 60)
+    )
+
+    fun unlockAchievement(id: String): AchievementDef? {
+        if (active.achievements.contains(id)) return null
+        val def = achievementDefs.firstOrNull { it.id == id } ?: return null
+        active.achievements.add(id)
+        active.miningXp += def.rewardXp / 2
+        active.combatXp += def.rewardXp / 2
+        saveProfiles()
+        return def
+    }
 
     val quests = listOf(
         ActiveQuest(0, "Добудь 5 Осколков аметиста", 141, 5, 4, 80),
@@ -100,12 +140,19 @@ class ProfileManager(private val storageRoot: File) {
                                 miningXp = p[4].toIntOrNull() ?: 0,
                                 combatXp = p[5].toIntOrNull() ?: 0,
                                 farmXp = p[6].toIntOrNull() ?: 0,
-                                activeQuestIdx = p.getOrNull(7)?.toIntOrNull() ?: 0
+                                activeQuestIdx = p.getOrNull(7)?.toIntOrNull() ?: 0,
+                                cloakId = p.getOrNull(8)?.toIntOrNull() ?: 0,
+                                enchAutoSmelt = p.getOrNull(9) == "1",
+                                enchFortune = p.getOrNull(10)?.toIntOrNull() ?: 0,
+                                enchFireAspect = p.getOrNull(11) == "1",
+                                enchLifesteal = p.getOrNull(12) == "1",
+                                enchHaste = p.getOrNull(13) == "1"
                             )
                             profiles += cur
                         }
                         "KILL" -> if (cur != null && p.size >= 3) cur.bestiaryKills[p[1]] = p[2].toIntOrNull() ?: 1
                         "FRIEND" -> if (cur != null && p.size >= 3) cur.friends.add(FriendEntry(p[1], p[2]))
+                        "ACH" -> if (cur != null && p.size >= 2) cur.achievements.add(p[1])
                     }
                 }
             } catch (_: Exception) {}
@@ -185,9 +232,10 @@ class ProfileManager(private val storageRoot: File) {
         for (pr in profiles) {
             sb.append("PROF|").append(pr.friendId).append('|').append(pr.nick).append('|')
                 .append(pr.skinId).append('|').append(pr.miningXp).append('|')
-                .append(pr.combatXp).append('|').append(pr.farmXp).append('|').append(pr.activeQuestIdx).append('\n')
+                .append(pr.combatXp).append('|').append(pr.farmXp).append('|').append(pr.activeQuestIdx).append('|').append(pr.cloakId).append('|').append(if (pr.enchAutoSmelt) "1" else "0").append('|').append(pr.enchFortune).append('|').append(if (pr.enchFireAspect) "1" else "0").append('|').append(if (pr.enchLifesteal) "1" else "0").append('|').append(if (pr.enchHaste) "1" else "0").append('\n')
             for ((k, v) in pr.bestiaryKills) sb.append("KILL|").append(k).append('|').append(v).append('\n')
             for (fr in pr.friends) sb.append("FRIEND|").append(fr.friendId).append('|').append(fr.nick).append('\n')
+            for (ac in pr.achievements) sb.append("ACH|").append(ac).append('\n')
         }
         val text = sb.toString()
         try {

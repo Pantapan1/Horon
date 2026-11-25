@@ -177,12 +177,12 @@ object BlockRegistry {
         reg(ItemDef(90, "Раздатчик", solid = true, hardness = 1.4f, dropId = 90, toolType = "pick", topTile = 51, sideTile = 58, colorHex = 0x747A86))
         reg(ItemDef(91, "Нотный блок", solid = true, hardness = 0.8f, dropId = 91, toolType = "axe", topTile = 59, sideTile = 59, colorHex = 0x845234, interactive = "noteblock"))
         reg(ItemDef(92, "Пашня (Грядка)", solid = true, hardness = 0.5f, dropId = 2, toolType = "shovel", topTile = 60, sideTile = 60, colorHex = 0x5A3A22))
-        reg(ItemDef(93, "Грядка моркови", solid = false, transparent = true, hardness = 0.25f, dropId = 205, topTile = 61, sideTile = 61, colorHex = 0xEE7E18))
-        reg(ItemDef(94, "Грядка картошки", solid = false, transparent = true, hardness = 0.25f, dropId = 206, topTile = 62, sideTile = 62, colorHex = 0xD4A85C))
-        reg(ItemDef(95, "Куст томатов", solid = false, transparent = true, hardness = 0.25f, dropId = 208, topTile = 63, sideTile = 63, colorHex = 0xE2242C))
-        reg(ItemDef(96, "Кукуруза (грядка)", solid = false, transparent = true, hardness = 0.25f, dropId = 209, topTile = 64, sideTile = 64, colorHex = 0xF8CE30))
+        reg(ItemDef(93, "Грядка моркови", solid = false, transparent = true, isProp = true, propIdx = 55, hardness = 0.25f, dropId = 205, colorHex = 0xEE7E18))
+        reg(ItemDef(94, "Грядка картошки", solid = false, transparent = true, isProp = true, propIdx = 56, hardness = 0.25f, dropId = 206, colorHex = 0xD4A85C))
+        reg(ItemDef(95, "Куст томатов", solid = false, transparent = true, isProp = true, propIdx = 57, hardness = 0.25f, dropId = 208, colorHex = 0xE2242C))
+        reg(ItemDef(96, "Кукуруза (грядка)", solid = false, transparent = true, isProp = true, propIdx = 58, hardness = 0.25f, dropId = 209, colorHex = 0xF8CE30))
         reg(ItemDef(97, "Арбуз (блок)", solid = true, hardness = 0.6f, dropId = 211, toolType = "axe", topTile = 65, sideTile = 65, colorHex = 0x36A238))
-        reg(ItemDef(98, "Грядка клубники", solid = false, transparent = true, hardness = 0.25f, dropId = 212, topTile = 66, sideTile = 66, colorHex = 0xEE2248))
+        reg(ItemDef(98, "Грядка клубники", solid = false, transparent = true, isProp = true, propIdx = 59, hardness = 0.25f, dropId = 212, colorHex = 0xEE2248))
 
         // --- НОВЫЕ СТРОИТЕЛЬНЫЕ И ДЕКОР-БЛОКИ v6.5 (161..179) ---
         reg(ItemDef(161, "Мрамор", solid = true, hardness = 1.3f, dropId = 161, toolType = "pick", topTile = 68, sideTile = 68, colorHex = 0xE8EAF2))
@@ -204,6 +204,14 @@ object BlockRegistry {
         reg(ItemDef(177, "Адская золотая руда", solid = true, isOre = true, hardness = 1.6f, dropId = 103, toolType = "pick", topTile = 82, sideTile = 82, colorHex = 0xE29828))
         reg(ItemDef(178, "Резной песчаник", solid = true, hardness = 1.1f, dropId = 178, toolType = "pick", topTile = 81, sideTile = 81, colorHex = 0xDEC88C))
         reg(ItemDef(179, "Светящийся кристалл", solid = true, hardness = 1.2f, dropId = 179, toolType = "pick", lightRadius = 320f, lightColor = 0x38E2EE, topTile = 83, sideTile = 83, colorHex = 0x38E2EE))
+        reg(ItemDef(180, "Настенный факел (Л)", solid = false, transparent = true, isProp = true, propIdx = 43, isWarmSource = true, lightRadius = 290f, lightColor = 0xFFB844, hardness = 0.1f, dropId = 37, colorHex = 0xFFB834))
+        reg(ItemDef(181, "Настенный факел (П)", solid = false, transparent = true, isProp = true, propIdx = 45, isWarmSource = true, lightRadius = 290f, lightColor = 0xFFB844, hardness = 0.1f, dropId = 37, colorHex = 0xFFB834))
+        reg(ItemDef(182, "Воронка (Авто-сбор)", solid = true, transparent = true, isProp = true, propIdx = 47, hardness = 1.2f, dropId = 182, toolType = "pick", colorHex = 0x747C8C))
+        reg(ItemDef(183, "Датчик света (День)", solid = false, transparent = true, isProp = true, propIdx = 48, hardness = 0.5f, dropId = 183, toolType = "axe", colorHex = 0x567CA8))
+        reg(ItemDef(184, "Датчик света (Ночь)", solid = false, transparent = true, isProp = true, propIdx = 49, lightRadius = 130f, lightColor = 0xFFE278, hardness = 0.5f, dropId = 183, toolType = "axe", colorHex = 0xF6C648))
+        reg(ItemDef(185, "Рельсы", solid = false, transparent = true, isProp = true, propIdx = 50, hardness = 0.5f, dropId = 185, toolType = "pick", colorHex = 0xB4BCCB))
+        reg(ItemDef(186, "Энергорельсы", solid = false, transparent = true, isProp = true, propIdx = 51, lightRadius = 130f, lightColor = 0xFF3A44, hardness = 0.6f, dropId = 186, toolType = "pick", colorHex = 0xF2C230))
+        reg(ItemDef(187, "Стол Зачарований", solid = true, transparent = true, isProp = true, propIdx = 53, lightRadius = 210f, lightColor = 0xB856FF, hardness = 2.4f, dropId = 187, toolType = "pick", colorHex = 0x9C38EE, interactive = "enchant"))
 
         // --- ПРЕДМЕТЫ (101..160 — ВСЕ С УНИКАЛЬНЫМИ ИКОНКАМИ!) ---
         reg(ItemDef(101, "Уголь", isItem = true, colorHex = 0x2B2E38, fuelPower = 80f))
@@ -321,6 +329,11 @@ object BlockRegistry {
         reg(ItemDef(253, "Шашлычок на шпажке", isItem = true, colorHex = 0xA24826, healFood = 14, healHp = 10))
         reg(ItemDef(254, "Изумрудный Меч (Лут)", isItem = true, colorHex = 0x2EE270, weaponStyle = "emerald", damage = 15))
         reg(ItemDef(255, "Обсидиановый Щит", isItem = true, colorHex = 0x9C42F8, armorDef = 7))
+        reg(ItemDef(256, "Вагонетка (Рельсы)", isItem = true, colorHex = 0x8C94A6))
+        reg(ItemDef(257, "Лодка (По воде)", isItem = true, colorHex = 0xA46C36))
+        reg(ItemDef(258, "Манок Совы (Разведка)", isItem = true, colorHex = 0xE4D4BC))
+        reg(ItemDef(259, "Ядро Голема-сундука", isItem = true, colorHex = 0x8E96A6))
+        reg(ItemDef(260, "Крылья Небес (Полёт)", isItem = true, colorHex = 0x8CE2FF))
 
         // =========================================================================
         // РЕЦЕПТЫ: Карман 2x2 + Верстак 3x3 (4 категории: tool, build, redstone, food) + Костёр!
@@ -399,6 +412,11 @@ object BlockRegistry {
         recipes += RecipeDef(73, 2, listOf(102 to 3), "2 Шипы-ловушки", category = "redstone")
         recipes += RecipeDef(74, 1, listOf(123 to 1, 102 to 3, 7 to 4), "Авто-арбалет", category = "redstone")
         recipes += RecipeDef(26, 1, listOf(159 to 4, 8 to 2), "Динамит (TNT)", category = "redstone")
+        recipes += RecipeDef(182, 1, listOf(102 to 5, 35 to 1), "Воронка (Авто-сбор лута)", category = "redstone")
+        recipes += RecipeDef(183, 1, listOf(15 to 3, 117 to 3, 7 to 3), "Датчик света (Ночь->Лампы)", category = "redstone")
+        recipes += RecipeDef(185, 8, listOf(102 to 4, 105 to 2), "8 Рельсов для шахты", category = "redstone")
+        recipes += RecipeDef(186, 6, listOf(103 to 4, 201 to 2, 105 to 1), "6 Энергорельсов (Ускор.)", category = "redstone")
+        recipes += RecipeDef(256, 1, listOf(102 to 5), "Вагонетка (Езда по рельсам)", category = "redstone")
 
         // СТРОЙКА И ДЕКОР ("build")
         recipes += RecipeDef(18, 1, listOf(4 to 8), "Печь", category = "build")
@@ -425,6 +443,11 @@ object BlockRegistry {
         recipes += RecipeDef(52, 1, listOf(7 to 6, 140 to 1), "Бочка", category = "build")
         recipes += RecipeDef(64, 4, listOf(7 to 4, 105 to 2), "4 Забора", category = "build")
         recipes += RecipeDef(34, 1, listOf(22 to 4, 116 to 1), "Портал в Ад", category = "build")
+        recipes += RecipeDef(187, 1, listOf(22 to 4, 104 to 2, 141 to 2), "Стол Зачарований", category = "build")
+        recipes += RecipeDef(257, 1, listOf(7 to 5), "Лодка (Быстро по воде)", category = "tool")
+        recipes += RecipeDef(258, 1, listOf(103 to 2, 141 to 1, 158 to 1), "Манок Совы (Питомец)", category = "tool")
+        recipes += RecipeDef(259, 1, listOf(35 to 1, 102 to 4, 201 to 2), "Голем-носильщик (Сундук)", category = "tool")
+        recipes += RecipeDef(260, 1, listOf(104 to 2, 141 to 3, 158 to 2), "Крылья Небес (Косметика+)", category = "tool")
 
         // ЕДА, МЕДИЦИНА И ФЕРМА ("food" + Костёр!)
         recipes += RecipeDef(114, 2, listOf(143 to 3), "2 Хлеба", category = "food")
@@ -605,9 +628,9 @@ object BlockRegistry {
         if (f5.exists()) {
             val tex = Texture(f5).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest) }
             itemsTexture5 = tex
-            val cw = tex.width / 4; val ch = tex.height / 2
+            val cw = tex.width / 4; val ch = tex.height / 4
             fun c5(idx: Int) = TextureRegion(tex, (idx % 4) * cw, (idx / 4) * ch, cw, ch)
-            for (k in 0 until 7) iconRegions[249 + k] = c5(k)
+            for (k in 0 until 12) iconRegions[249 + k] = c5(k)
         }
     }
 
@@ -623,7 +646,11 @@ object BlockRegistry {
         iconRegions[81]  = pIcon(30); iconRegions[82]  = pIcon(31); iconRegions[83]  = pIcon(32)
         iconRegions[84]  = pIcon(33); iconRegions[85]  = pIcon(34); iconRegions[86]  = pIcon(36)
         iconRegions[87]  = pIcon(38); iconRegions[172] = pIcon(40); iconRegions[173] = pIcon(41)
-        iconRegions[89]  = pIcon(42)
+        iconRegions[89]  = pIcon(42); iconRegions[180] = pIcon(43); iconRegions[181] = pIcon(45)
+        iconRegions[182] = pIcon(47); iconRegions[183] = pIcon(48); iconRegions[184] = pIcon(49)
+        iconRegions[185] = pIcon(50); iconRegions[186] = pIcon(52); iconRegions[187] = pIcon(53)
+        iconRegions[93]  = pIcon(55); iconRegions[94]  = pIcon(56); iconRegions[95]  = pIcon(57)
+        iconRegions[96]  = pIcon(58); iconRegions[98]  = pIcon(59)
     }
 
     fun registerModBlock(id: Int, name: String, r: Float, g: Float, b: Float): Int {

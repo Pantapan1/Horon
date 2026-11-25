@@ -32,7 +32,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 enum class UiScreen {
-    MAIN_MENU, WORLD_SLOTS, PROFILES_FRIENDS, PLAYING, PAUSE, INVENTORY, WORKBENCH, FURNACE, CHEST, CAMPFIRE, WAYSTONES, ANVIL, TRADER_QUESTS, BESTIARY_SKILLS, FULL_MAP, SETTINGS_MODHUB, WARDROBE, MULTIPLAYER, DEATH
+    MAIN_MENU, WORLD_SLOTS, PROFILES_FRIENDS, PLAYING, PAUSE, INVENTORY, WORKBENCH, FURNACE, CHEST, CAMPFIRE, WAYSTONES, ANVIL, TRADER_QUESTS, BESTIARY_SKILLS, FULL_MAP, ENCHANTING, ACHIEVEMENTS, GOLEM_BAG, SETTINGS_MODHUB, WARDROBE, MULTIPLAYER, DEATH
 }
 
 data class IsoPick(val gx: Int, val gy: Int, val gz: Int, val id: Int)
@@ -102,10 +102,17 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private var autoAttackCd = 0f
     var baseWalkSpeed = 5.0f
     var cameraZoom = 0.85f
-    var worldFileName = "world_iso_v65.vhworld"
+    var worldFileName = "world_iso_v66.vhworld"
 
     // Стройка и копка v6.3: режим (0=ПОЛ, 1=СТЕНА, 2=КРЫША), свайп-стройка, быстрый откат!
     private var buildMode = 1 // 0=ПОЛ, 1=СТЕНА, 2=КРЫША
+    private var buildZOffset = 0 // Сдвиг высоты стройки (-2..+3) кнопками Z+ / Z-
+    private var boxFillMode = false // Заливка прямоугольником (Box Fill)
+    private var fastDemolishMode = false // Режим быстрого сноса блоков при стройке (СНОС)
+    private var boxStartGx = Int.MIN_VALUE; private var boxStartGy = Int.MIN_VALUE; private var boxStartGz = 0
+    private var digActionMode = 0 // 0=ВНИЗ, 1=ВВЕРХ, 2=ТОННЕЛЬ
+    private var isDragMining = false
+    private var menuPanoScroll = 0f
     private var lastPlacedX = Int.MIN_VALUE; private var lastPlacedY = Int.MIN_VALUE; private var lastPlacedZ = Int.MIN_VALUE
     private var lastPlacedId = 0; private var lastPlacedTime = -10f
     private var dragBuildLastX = Int.MIN_VALUE; private var dragBuildLastY = Int.MIN_VALUE; private var dragBuildLastZ = Int.MIN_VALUE
@@ -436,10 +443,14 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private fun updateOstMusic() {
         if (!soundEnabled || screen == UiScreen.MAIN_MENU) { bgMusic?.stop(); currentOst = ""; return }
         val isDeep = world.dimension == "overworld" && player.z < WorldIso.SEA_Z - 5
+        val nearTrader = entities.mobs.any { it.type == "trader" && hypot((it.x - player.x).toDouble(), (it.y - player.y).toDouble()) < 18.0 }
         val target = when {
             entities.getActiveBoss() != null -> "ost_boss.wav"
             world.dimension == "nether" -> "ost_nether.wav"
-            entities.dayFactor < 0.25f || isDeep -> "ost_overworld_night.wav"
+            world.dimension == "aether" -> "ost_aether.wav"
+            isDeep || player.z < WorldIso.SEA_Z - 6 -> "ost_cave.wav"
+            nearTrader && entities.dayFactor >= 0.35f -> "ost_village.wav"
+            entities.dayFactor < 0.28f -> "ost_overworld_night.wav"
             else -> "ost_overworld_day.wav"
         }
         if (target == currentOst && bgMusic?.isPlaying == true) return
@@ -465,6 +476,13 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 }
             }
         }
+    }
+
+    private fun tryUnlockAchievement(id: String) {
+        val unlocked = profiles.unlockAchievement(id) ?: return
+        player.addItem(118, unlocked.rewardEmeralds)
+        SoundFx.play("achieve", 0.8f)
+        showToast("ДОСТИЖЕНИЕ: ${unlocked.title}! (+${unlocked.rewardEmeralds} Изумр.)")
     }
 
     private fun handleMobKill(dead: MobEntity) {
@@ -528,6 +546,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         for ((dId, dCnt) in dropsToSpawn) {
             entities.spawnDrop(dId, dCnt, dead.x + (Random.nextFloat() - 0.5f) * 0.4f, dead.y + (Random.nextFloat() - 0.5f) * 0.4f, dead.z)
         }
+        if (dead.isBoss) tryUnlockAchievement("boss_slayer")
+        if (profiles.active.enchFireAspect) {
+            for (i in dropsToSpawn.indices) if (dropsToSpawn[i].first == 157) dropsToSpawn[i] = 115 to dropsToSpawn[i].second
+        }
         val leveledUp = profiles.recordMobKill(dead.type, dead.isBoss)
         SoundFx.play(if (dead.isBoss || leveledUp) "levelup" else "hit", 0.75f)
         val firstDropName = BlockRegistry.items[dropsToSpawn.firstOrNull()?.first ?: 0]?.name ?: ""
@@ -554,11 +576,12 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         tmpVec3.set(screenX, screenY, 0f)
         camWorld.unproject(tmpVec3)
         val pz = floor(player.z).toInt().coerceIn(1, WorldIso.MAX_Z - 4)
-        val planeZ = when (buildMode) {
-            0 -> max(1, pz - 1) // ПОЛ
-            2 -> min(WorldIso.MAX_Z - 1, pz + 3) // КРЫША
-            else -> pz // СТЕНА (на уровне ног!)
+        val baseZ = when (buildMode) {
+            0 -> max(1, pz - 1)
+            2 -> min(WorldIso.MAX_Z - 1, pz + 3)
+            else -> pz
         }
+        val planeZ = (baseZ + buildZOffset).coerceIn(1, WorldIso.MAX_Z - 2)
         val adj = tmpVec3.y - (planeZ + (if (buildMode == 0) 1f else 0.35f)) * WorldIso.ZH
         val gx = Math.round(0.5f * (tmpVec3.x / WorldIso.TW - adj / WorldIso.TH))
         val gy = Math.round(0.5f * (-adj / WorldIso.TH - tmpVec3.x / WorldIso.TW))
@@ -591,11 +614,30 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val cur = world.getBlock(gx, gy, tz)
         if (cur != 0 && BlockRegistry.items[cur]?.isLiquid != true) return false
         if (pDef.solid && floor(player.x).toInt() == gx && floor(player.y).toInt() == gy && (floor(player.z).toInt() == tz || floor(player.z).toInt() + 1 == tz)) return false
+        var placeId = pSlot.id
+        if (placeId == 37) {
+            val wallLeft = BlockRegistry.items[world.getBlock(gx - 1, gy, tz)]?.solid == true
+            val wallRight = BlockRegistry.items[world.getBlock(gx, gy - 1, tz)]?.solid == true
+            if (wallLeft) { placeId = 180; tryUnlockAchievement("wall_light") }
+            else if (wallRight) { placeId = 181; tryUnlockAchievement("wall_light") }
+        }
+        val oldCount = pSlot.count
         if (player.takeItem(pSlot.id, 1)) {
-            setWorldBlock(gx, gy, tz, pSlot.id)
+            setWorldBlock(gx, gy, tz, placeId)
             entities.spawnBlockParticles(gx, gy, tz, pDef.colorHex, 5)
-            SoundFx.play("mine", 0.4f)
-            lastPlacedX = gx; lastPlacedY = gy; lastPlacedZ = tz; lastPlacedId = pSlot.id; lastPlacedTime = elapsed
+            SoundFx.play(if (placeId == 180 || placeId == 181) "wall_torch" else "mine", 0.45f)
+            lastPlacedX = gx; lastPlacedY = gy; lastPlacedZ = tz; lastPlacedId = placeId; lastPlacedTime = elapsed
+            if (oldCount <= 1 && player.slots[player.selectedSlot] == null) {
+                for (bi in 9 until PlayerState.INV_SIZE) {
+                    val bs = player.slots[bi]
+                    if (bs != null && bs.id == pSlot.id) {
+                        player.slots[player.selectedSlot] = bs
+                        player.slots[bi] = null
+                        showToast("Авто-пополнение: ${pDef.name}")
+                        break
+                    }
+                }
+            }
             return true
         }
         return false
@@ -635,6 +677,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         "button" -> "НАЖАТЬ КНОПКУ"
         "noteblock" -> "ИГРАТЬ НОТУ"
         "iron_door" -> "ЖЕЛЕЗНАЯ ДВЕРЬ"
+        "enchant" -> "СТОЛ ЗАЧАРОВАНИЙ"
         "door" -> if (id == 57) "ОТКРЫТЬ ДВЕРЬ" else "ЗАКРЫТЬ ДВЕРЬ"
         "sign" -> "ТАБЛИЧКА"
         "altar" -> "АЛТАРЬ БОССА"
@@ -707,13 +750,66 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         } else {
             if (isGuest) { netMp.sendMobHit(target.id, dmg, player.aimGx, player.aimGy, isFrost); target.hurtFlash = 0.22f }
             else entities.damageMob(target, dmg, player.aimGx, player.aimGy, frostHit = isFrost, onKill = ::handleMobKill)
-            if (isRuby) {
+            if (isRuby || profiles.active.enchLifesteal) {
                 player.hp = min(player.maxHp, player.hp + 2f)
                 entities.floatingTexts.add(FloatingText(player.x, player.y, player.z + 1.5f, "+2 HP", Color(1f, 0.35f, 0.55f, 1f)))
             }
             if (isFlint) entities.spawnBlockParticles(floor(target.x).toInt(), floor(target.y).toInt(), floor(target.z).toInt(), 0xFF7718, 6)
             autoAttackCd = if (isWeapon) 0.46f else 0.58f
         }
+    }
+
+    private fun digStairUpAt(gx: Int, gy: Int, pz: Int) {
+        var broke = false
+        for (dz in 1..3) {
+            val z = pz + dz
+            if (z in 1 until WorldIso.MAX_Z) {
+                val b = world.getBlock(gx, gy, z)
+                if (b > 0 && (BlockRegistry.items[b]?.hardness ?: 999f) < 900f) {
+                    setWorldBlock(gx, gy, z, 0)
+                    if (!player.creative) BlockRegistry.items[b]?.dropId?.let { if (it > 0) entities.spawnDrop(it, 1, gx + 0.5f, gy + 0.5f, z.toFloat()) }
+                    entities.spawnBlockParticles(gx, gy, z, BlockRegistry.items[b]?.colorHex ?: 0x888888, 4)
+                    broke = true
+                }
+            }
+        }
+        val stepZ = pz.coerceIn(1, WorldIso.MAX_Z - 2)
+        if (world.getBlock(gx, gy, stepZ) == 0 && (player.creative || player.takeItem(4, 1) || player.takeItem(2, 1))) {
+            setWorldBlock(gx, gy, stepZ, 4); broke = true
+        }
+        if (broke) { SoundFx.play("break", 0.55f); showToast("Ступенька ВВЕРХ пробита!") }
+    }
+
+    private fun digTunnelForwardAt(gx: Int, gy: Int, pz: Int) {
+        var broke = false
+        for (step in 1..2) {
+            val tx = floor(player.x + player.aimGx * step).toInt()
+            val ty = floor(player.y + player.aimGy * step).toInt()
+            for (dz in 0..1) {
+                val z = (pz + dz).coerceIn(1, WorldIso.MAX_Z - 2)
+                val b = world.getBlock(tx, ty, z)
+                if (b > 0 && (BlockRegistry.items[b]?.hardness ?: 999f) < 900f) {
+                    setWorldBlock(tx, ty, z, 0)
+                    if (!player.creative) BlockRegistry.items[b]?.dropId?.let { if (it > 0) entities.spawnDrop(it, 1, tx + 0.5f, ty + 0.5f, z.toFloat()) }
+                    entities.spawnBlockParticles(tx, ty, z, BlockRegistry.items[b]?.colorHex ?: 0x888888, 4)
+                    broke = true
+                }
+            }
+        }
+        if (broke) { SoundFx.play("break", 0.55f); showToast("Тоннель 1x2 пробит!") }
+    }
+
+    private fun autoSelectBestToolFor(blockDef: ItemDef) {
+        if (blockDef.toolType.isEmpty()) return
+        val curDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
+        if (curDef != null && (curDef.toolType == blockDef.toolType || (blockDef.toolType == "shovel" && curDef.toolType == "pick"))) return
+        var bestIdx = -1; var bestSpd = 0f
+        for (i in 0 until 9) {
+            val d = player.slots[i]?.let { BlockRegistry.items[it.id] } ?: continue
+            val match = d.toolType == blockDef.toolType || (blockDef.toolType == "shovel" && d.toolType == "pick")
+            if (match && d.mineSpeed > bestSpd) { bestSpd = d.mineSpeed; bestIdx = i }
+        }
+        if (bestIdx >= 0) player.selectedSlot = bestIdx
     }
 
     private fun digStairStepAt(gx: Int, gy: Int, pz: Int) {
@@ -790,6 +886,35 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             246 -> { // Подзорная труба: переключает дальний тактический обзор!
                 cameraZoom = if (cameraZoom > 1.25f) 0.75f else 1.45f
                 showToast(if (cameraZoom > 1.25f) "Подзорная труба: Обзор 1.45x" else "Подзорная труба: Обычный обзор")
+                return true
+            }
+            256 -> {
+                player.ridingMode = if (player.ridingMode == "minecart") "" else "minecart"
+                SoundFx.play("minecart", 0.7f); tryUnlockAchievement("rider")
+                showToast(if (player.ridingMode == "minecart") "Вы сели в Вагонетку! Едьте по рельсам!" else "Вы вышли из Вагонетки")
+                return true
+            }
+            257 -> {
+                player.ridingMode = if (player.ridingMode == "boat") "" else "boat"
+                SoundFx.play("boat", 0.7f); tryUnlockAchievement("rider")
+                showToast(if (player.ridingMode == "boat") "Лодка на воде! Плывите быстро!" else "Вы вышли из Лодки")
+                return true
+            }
+            258 -> {
+                val on = entities.toggleOwlPet(player)
+                SoundFx.play("levelup", 0.65f); if (on) tryUnlockAchievement("pet_master")
+                showToast(if (on) "Сова-разведчик в небе! (Видит сундуки на карте)" else "Сова улетела отдыхать")
+                return true
+            }
+            259 -> {
+                val on = entities.toggleGolemPet(player)
+                SoundFx.play("piston", 0.65f); if (on) tryUnlockAchievement("pet_master")
+                showToast(if (on) "Голем-сундук призван! Тапните по нему (18 слотов)!" else "Голем отдыхает")
+                return true
+            }
+            260 -> {
+                profiles.active.cloakId = 5; profiles.saveProfiles()
+                SoundFx.play("enchant", 0.7f); showToast("Крылья Небес экипированы! (+15% скорости)")
                 return true
             }
             250 -> { // Часы Редстоуна: точное время + импульс редстоуна вокруг!
@@ -892,7 +1017,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 } else {
                     entities.damageMob(m, dmg, player.aimGx, player.aimGy, frostHit = isFrost, onKill = ::handleMobKill)
                 }
-                if (isRuby) {
+                if (isRuby || profiles.active.enchLifesteal) {
                     player.hp = min(player.maxHp, player.hp + 2f)
                     entities.floatingTexts.add(FloatingText(player.x, player.y, player.z + 1.5f, "+2 HP", Color(1f, 0.35f, 0.55f, 1f)))
                 }
@@ -986,15 +1111,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     player.sleepBedX = pick.gx; player.sleepBedY = pick.gy; player.sleepBedZ = pick.gz
                     player.x = pick.gx + 0.5f; player.y = pick.gy + 0.5f; player.z = pick.gz.toFloat()
                     player.vx = 0f; player.vy = 0f; player.sleepElapsed = 0f; player.zzzTimer = 0.2f
-                    showToast("Вы легли спать • Время ускорено (x2.6, ночь ~2.3 мин)")
+                    showToast("Вы легли спать • Время ускорено (x4.5, ночь ~2.3 мин)")
                     return
                 }
                 "portal" -> { switchDimension(if (world.dimension == "nether") "overworld" else "nether"); return }
                 "tnt" -> { explodeAt(pick.gx, pick.gy, pick.gz, 2.8f); return }
-                "lever" -> { redstone.toggleLever(pick.gx, pick.gy, pick.gz, this); return }
+                "lever" -> { redstone.toggleLever(pick.gx, pick.gy, pick.gz, this); tryUnlockAchievement("redstone_eng"); return }
                 "button" -> { redstone.pressButton(pick.gx, pick.gy, pick.gz, world); showToast("Кнопка: импульс Редстоуна (2.5с)!"); return }
                 "noteblock" -> { redstone.playNoteBlock(pick.gx, pick.gy, pick.gz, entities); return }
                 "iron_door" -> { showToast("Железную дверь открывает Редстоун (Рычаг / Плита / Кнопка)!"); return }
+                "enchant" -> { SoundFx.play("enchant", 0.65f); screen = UiScreen.ENCHANTING; return }
             }
         }
 
@@ -1084,7 +1210,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     if (pick.id in intArrayOf(1, 2, 42)) {
                         setWorldBlock(pick.gx, pick.gy, pick.gz, 92)
                         entities.spawnBlockParticles(pick.gx, pick.gy, pick.gz, 0x5A3A22, 6)
-                        SoundFx.play("mine", 0.5f); showToast("Вспахана грядка (Пашня)!"); return
+                        SoundFx.play("hoe", 0.55f); tryUnlockAchievement("farmer_pro"); showToast("Вспахана грядка (Пашня)!"); return
                     }
                 }
                 204, 247 -> { // Лейка или Удобрение: мгновенно ускоряет рост грядок и цветов вокруг!
@@ -1159,20 +1285,30 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             entities.spawnBlockParticles(bx, by, bz, d.colorHex, 7)
             SoundFx.play("break", 0.55f)
             var dropAmt = if ((id == 54 || id == 67) && entities.season in setOf(Season.SPRING, Season.SUMMER)) 2 else 1
+            var finalDropId = d.dropId
             if (d.isOre) {
-                if (Random.nextFloat() < profiles.active.miningLevel() * 0.04f) { dropAmt += 1; showToast("Навык Шахтёра: Двойная руда!") }
+                tryUnlockAchievement("first_mine")
+                if (profiles.active.enchAutoSmelt) {
+                    val smelted = BlockRegistry.smeltMap[finalDropId] ?: BlockRegistry.smeltMap[id]
+                    if (smelted != null) finalDropId = smelted
+                }
+                if (profiles.active.enchFortune > 0 && Random.nextFloat() < profiles.active.enchFortune * 0.28f) {
+                    dropAmt += profiles.active.enchFortune
+                }
+                if (Random.nextFloat() < profiles.active.miningLevel() * 0.04f) { dropAmt += 1 }
                 if (profiles.addMiningXp(10)) { SoundFx.play("levelup", 0.7f); showToast("Уровень Шахтёра: ${profiles.active.miningLevel()}!") }
             } else if (id == 54 || id == 67) {
                 if (profiles.addFarmXp(8)) { SoundFx.play("levelup", 0.7f); showToast("Уровень Фермера: ${profiles.active.farmLevel()}!") }
             }
-            if (d.dropId > 0 && !player.creative) entities.spawnDrop(d.dropId, dropAmt, bx + 0.5f, by + 0.5f, bz.toFloat())
+            if (finalDropId > 0 && !player.creative) entities.spawnDrop(finalDropId, dropAmt, bx + 0.5f, by + 0.5f, bz.toFloat())
             luaMods.emitBlockBreak(bx, by, bz, id, held?.id ?: 0)
         }
 
         if (player.creative) { breakSingle(mineX, mineY, mineZ); holdingMine = false; mineProgress = 0f; return }
 
         val pickOnDirt = hDef?.toolType == "pick" && bDef.toolType == "shovel"
-        val speed = (if (hDef != null && (hDef.toolType == bDef.toolType || pickOnDirt)) hDef.mineSpeed else 1.4f) * (1f + player.toolUpgradeLvl * 0.18f)
+        val hasteMult = if (profiles.active.enchHaste) 1.35f else 1.0f
+        val speed = (if (hDef != null && (hDef.toolType == bDef.toolType || pickOnDirt)) hDef.mineSpeed else 1.4f) * (1f + player.toolUpgradeLvl * 0.18f) * hasteMult
         mineProgress += (dt * speed) / max(0.15f, bDef.hardness)
         if (mineProgress >= 1.0f) {
             breakSingle(mineX, mineY, mineZ)
@@ -1446,7 +1582,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val speedBuff = (if (player.speedBuffTimer > 0f) 1.45f else 1.0f) * (if (player.hasSpeedBoots()) 1.20f else 1.0f)
         val inDeepDark = isCutawayActive && player.z < WorldIso.SEA_Z - 4 && (BlockRegistry.items[player.slots[player.selectedSlot]?.id ?: 0]?.lightRadius ?: 0f) <= 0f && (BlockRegistry.items[player.offhand?.id ?: 0]?.lightRadius ?: 0f) <= 0f
         val darkMult = if (inDeepDark) 0.85f else 1.0f
-        val spd = baseWalkSpeed * speedBuff * darkMult * min(1f, inLen) * (if (inWater) 0.58f else if (inLen > 0.85f) 1.32f else 1.0f)
+        val curBlockHere = world.getBlock(floor(player.x).toInt(), floor(player.y).toInt(), floor(player.z).toInt())
+        val onRail = curBlockHere == 185 || curBlockHere == 186
+        val rideMult = when (player.ridingMode) {
+            "minecart" -> if (curBlockHere == 186) 2.65f else if (onRail) 1.95f else 0.70f
+            "boat" -> if (inWater) 2.55f else 0.65f
+            "deer" -> 1.65f
+            else -> if (profiles.active.cloakId == 5) 1.15f else 1.0f
+        }
+        val waterFactor = if (player.ridingMode == "boat") 1.0f else if (inWater) 0.58f else if (inLen > 0.85f) 1.32f else 1.0f
+        val spd = baseWalkSpeed * speedBuff * darkMult * rideMult * min(1f, inLen) * waterFactor
         player.vx += (gxDir * spd - player.vx) * min(1f, dt * 11f)
         player.vy += (gyDir * spd - player.vy) * min(1f, dt * 11f)
 
@@ -1510,6 +1655,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             if (fGx != lastFogGx || fGy != lastFogGy) {
                 lastFogGx = fGx; lastFogGy = fGy
                 if (player.z < WorldIso.SEA_Z - 2) world.revealFog(fGx, fGy, 6)
+                if (player.z < 25f) tryUnlockAchievement("deep_miner")
             }
             // Обновляем мини-карту через нативный Rust 2 раза в секунду
             minimapTimer += dt
@@ -1617,7 +1763,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val pGx = floor(player.x).toInt(); val pGy = floor(player.y).toInt(); val pZ = floor(player.z).toInt()
         val zMin = max(0, pZ - 6)
         val zMax = activeSliceZ
-        val animFrame = (elapsed * 5f).toInt() and 1
+        val animFrame = (elapsed * 8f).toInt() and 1
         val grassTint = if (world.dimension == "overworld") entities.season.grassTint else Color.WHITE
 
         // === 1 SINGLE NATIVE RUST CALL BUILDS ALL VISIBLE 250-LAYER QUADS, PROPS, LIGHTS & ORES! ===
@@ -1654,10 +1800,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 if (di in 0 until diagCount) mobsByDiag[di].add(m)
             }
         }
-        entities.foxPet?.let { pt ->
-            val di = entityDiagIndex(pt.x, pt.y, pt.z, minSum)
-            if (di in 0 until diagCount) mobsByDiag[di].add(pt)
-        }
+        entities.foxPet?.let { pt -> val di = entityDiagIndex(pt.x, pt.y, pt.z, minSum); if (di in 0 until diagCount) mobsByDiag[di].add(pt) }
+        entities.owlPet?.let { pt -> val di = entityDiagIndex(pt.x, pt.y, pt.z, minSum); if (di in 0 until diagCount) mobsByDiag[di].add(pt) }
+        entities.golemPet?.let { pt -> val di = entityDiagIndex(pt.x, pt.y, pt.z, minSum); if (di in 0 until diagCount) mobsByDiag[di].add(pt) }
         for (d in entities.drops) {
             if (d.z <= zMax + 1 && d.z >= zMin - 1) {
                 val di = entityDiagIndex(d.x, d.y, d.z, minSum)
@@ -1707,7 +1852,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val def = BlockRegistry.items[bId]
                 val pIdx = when (bId) {
                     35 -> if (openChestPos?.first == gx && openChestPos?.second == gy && openChestPos?.third == gz) 3 else 2
-                    37 -> animFrame; 34 -> 5 + animFrame; 59 -> 11 + animFrame; 80 -> 28 + animFrame; 86 -> 36 + animFrame; 85 -> if (redstone.isButtonActive(gx, gy, gz)) 35 else 34; 87 -> if (redstone.isPowered(gx, gy, gz)) 39 else 38
+                    37 -> animFrame; 34 -> 5 + animFrame; 59 -> 11 + animFrame; 80 -> 28 + animFrame; 86 -> 36 + animFrame; 85 -> if (redstone.isButtonActive(gx, gy, gz)) 35 else 34; 87 -> if (redstone.isPowered(gx, gy, gz)) 39 else 38; 180 -> 43 + animFrame; 181 -> 45 + animFrame; 186 -> if (redstone.isPowered(gx, gy, gz)) 52 else 51; 187 -> 53 + animFrame
                     else -> def?.propIdx ?: -1
                 }
                 if (pIdx in SpriteArt.props.indices) {
@@ -1835,6 +1980,15 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             drawIsoQuad(SpriteArt.whitePx, gsX - TW, gsY, gsX - TW, gsTop, gsX, gsTop - TH, gsX, gsY - TH, gSide, 0f, 0f, 1f, 1f)
             drawIsoQuad(SpriteArt.whitePx, gsX, gsY - TH, gsX, gsTop - TH, gsX + TW, gsTop, gsX + TW, gsY, gSide, 0f, 0f, 1f, 1f)
             drawIsoQuad(SpriteArt.whitePx, gsX - TW, gsTop, gsX, gsTop + TH, gsX + TW, gsTop, gsX, gsTop - TH, gBits, 0f, 0f, 1f, 1f)
+            if (boxFillMode && boxStartGx != Int.MIN_VALUE && ghostTarget != null) {
+                val x0 = min(boxStartGx, gPick.gx); val x1 = max(boxStartGx, gPick.gx)
+                val y0 = min(boxStartGy, gPick.gy); val y1 = max(boxStartGy, gPick.gy)
+                val bxBits = Color.toFloatBits(0.28f, 0.96f, 0.56f, 0.34f)
+                for (bx in x0..min(x0 + 9, x1)) for (by in y0..min(y0 + 9, y1)) {
+                    val qx = isoToScreenX(bx.toFloat(), by.toFloat()); val qy = blockScreenY(bx, by, boxStartGz + 1)
+                    drawIsoQuad(SpriteArt.whitePx, qx - TW, qy, qx, qy + TH, qx + TW, qy, qx, qy - TH, bxBits, 0f, 0f, 1f, 1f)
+                }
+            }
         }
 
         // Подсветка добываемого блока + прогресс бар
@@ -1844,7 +1998,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val syTop = blockScreenY(sel.gx, sel.gy, sel.gz + 1)
                 drawIsoQuad(SpriteArt.whitePx, sx - TW, syTop, sx, syTop + TH, sx + TW, syTop, sx, syTop - TH, Color.toFloatBits(1f, 0.86f, 0.30f, 0.30f), 0f, 0f, 1f, 1f)
                 if (mineProgress > 0.02f) {
-                    spriteBatch.setColor(0.08f, 0.06f, 0.12f, 0.88f); spriteBatch.draw(SpriteArt.whitePx, sx - 26f, syTop + 18f, 52f, 9f)
+                    val crIdx = (mineProgress * 7.99f).toInt().coerceIn(0, 7)
+            spriteBatch.setColor(1f, 1f, 1f, 0.92f)
+            spriteBatch.draw(SpriteArt.crackFrames[crIdx], sx - 32f, syTop - 32f, 64f, 64f)
+            spriteBatch.setColor(0.08f, 0.06f, 0.12f, 0.88f); spriteBatch.draw(SpriteArt.whitePx, sx - 26f, syTop + 18f, 52f, 9f)
                     spriteBatch.setColor(0.28f, 0.94f, 0.52f, 1f); spriteBatch.draw(SpriteArt.whitePx, sx - 24f, syTop + 20f, 48f * mineProgress.coerceIn(0f, 1f), 5f)
                     spriteBatch.color = Color.WHITE
                 }
@@ -1913,12 +2070,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             // СПЯЩИЙ ГЕРОЙ ПОД ОДЕЯЛОМ С ПЛАВНЫМ ДЫХАНИЕМ!
             val breath = sin(elapsed * 2.2f) * 0.04f
             spriteBatch.color = Color.WHITE
-            spriteBatch.draw(frames[3], px - w * 0.5f, py - 10f, w * 0.5f, 16f, w, h, 1f + breath * 0.4f, 1f - breath * 0.5f, 0f)
+            spriteBatch.draw(frames[7], px - w * 0.5f, py - 10f, w * 0.5f, 16f, w, h, 1f + breath * 0.4f, 1f - breath * 0.5f, 0f)
             return
         }
 
         // 4-шаговый цикл ходьбы (0 -> 1 -> 0 -> 2) + живое подпрыгивание и наклон!
-        val frameIdx = if (!moving) 0 else when ((walkAnim.toInt() % 4 + 4) % 4) { 1 -> 1; 3 -> 2; else -> 0 }
+        val frameIdx = when {
+            attackAnim > 0.35f -> 6
+            !moving -> ((elapsed * 4f).toInt() and 1)
+            else -> 2 + (((walkAnim * 1.45f).toInt() % 4 + 4) % 4)
+        }
         val hopY = if (moving) abs(sin(walkAnim * 1.5f)) * 7.5f else 0f
         val strideTilt = if (moving) sin(walkAnim * 1.5f) * 6.5f else 0f
         val breathY = sin(elapsed * 3.4f) * 0.035f
@@ -1935,7 +2096,31 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         spriteBatch.draw(SpriteArt.shadowTex, px - 22f * shSc, py - 8f, 44f * shSc, 16f * shSc)
 
         if (hurtFlash > 0f) spriteBatch.setColor(1f, 0.40f, 0.40f, 1f) else spriteBatch.color = Color.WHITE
-        spriteBatch.draw(frames[frameIdx], px - w * 0.5f + side * lunge * 6f, py - 9f + hopY, w * 0.5f, 9f, w, h, scaleX, scaleY, rot)
+        val cId = profiles.active.cloakId
+        if (cId > 0) {
+            if (cId == 5) {
+                val flap = sin(elapsed * 9f) * 8f
+                BlockRegistry.getIconRegion(260)?.let { wReg ->
+                    spriteBatch.draw(wReg, px - 26f, py + 16f + hopY + flap * 0.25f, 26f, 14f, 52f, 44f, 1f, 1f, flap * 0.4f)
+                }
+            } else {
+                val cloakCol = when (cId) { 1 -> 0xD8283C; 2 -> 0x24C868; 3 -> 0x2C1E48; else -> 0xF4C230 }
+                spriteBatch.setColor(((cloakCol shr 16) and 0xFF)/255f, ((cloakCol shr 8) and 0xFF)/255f, (cloakCol and 0xFF)/255f, 0.92f)
+                val sway = sin(elapsed * 8f + walkAnim) * 3f
+                spriteBatch.draw(SpriteArt.whitePx, px - side * 12f - 7f + sway, py + 6f + hopY, 14f, 28f)
+                spriteBatch.color = Color.WHITE
+            }
+        }
+        val rideLift = if (player.ridingMode.isNotEmpty() && hurtSquash == player.hurtSquash) 10f else 0f
+        if (rideLift > 0f) {
+            val mountReg = when (player.ridingMode) {
+                "minecart" -> SpriteArt.props[60]
+                "boat" -> SpriteArt.props[61]
+                else -> SpriteArt.mobSprites["deer"]?.get(((elapsed * 8f).toInt() and 7))
+            }
+            mountReg?.let { spriteBatch.draw(it, px - 32f, py - 10f, 32f, 10f, 64f, 64f, side, 1f, 0f) }
+        }
+        spriteBatch.draw(frames[frameIdx], px - w * 0.5f + side * lunge * 6f, py - 9f + hopY + rideLift, w * 0.5f, 9f, w, h, scaleX, scaleY, rot)
         spriteBatch.color = Color.WHITE
 
         // Видимая Броня и Щит прямо на герое!
@@ -1975,8 +2160,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val mSz = if (m.isBoss) 96f else 64f
         val moveSpd = hypot(m.vx.toDouble(), m.vy.toDouble()).toFloat()
         val moving = moveSpd > 0.15f
-        val mFrame = if (m.type == "mimic" || m.type in setOf("bee", "bat", "blaze", "sky_guardian")) ((elapsed * 7f).toInt() and 1)
-                     else if (moving) (m.walkAnim.toInt() and 1) else 0
+        val mFrame = if (m.type == "mimic" || m.type in setOf("bee", "bat", "blaze", "sky_guardian", "owl_pet")) ((elapsed * 10f).toInt() and 7)
+                     else if (moving) ((m.walkAnim * 2.2f).toInt() and 7)
+                     else ((elapsed * 4f + m.idlePhase).toInt() and 1)
         val reg = SpriteArt.mobSprites[m.type]?.get(mFrame) ?: SpriteArt.mobSprites["sheep"]!![0]
 
         val isSlime = m.type in setOf("slime", "mini_slime", "magma_slime")
@@ -2172,6 +2358,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             UiScreen.TRADER_QUESTS -> renderTraderQuestsScreen(W, H)
             UiScreen.BESTIARY_SKILLS -> renderBestiarySkillsScreen(W, H)
             UiScreen.FULL_MAP -> renderFullMapScreen(W, H)
+            UiScreen.ENCHANTING -> renderEnchantingScreen(W, H)
+            UiScreen.ACHIEVEMENTS -> renderAchievementsScreen(W, H)
+            UiScreen.GOLEM_BAG -> renderGolemBagScreen(W, H)
             UiScreen.PLAYING -> renderGameplayHud(W, H)
             UiScreen.PAUSE -> { renderGameplayHud(W, H); renderPauseMenu(W, H) }
             UiScreen.INVENTORY -> renderInventoryScreen(W, H)
@@ -2205,15 +2394,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         if (toastTimer > 0f && toastText.isNotEmpty()) {
             glyphLayout.setText(fontSmall, toastText)
             val tw = glyphLayout.width + 36f
-            drawPanel((W - tw) / 2f, H - 106f, tw, 38f, Color(0.08f, 0.05f, 0.16f, 0.90f), Color.GOLD)
-            drawCenteredText(fontSmall, toastText, (W - tw) / 2f, H - 106f, tw, 38f)
+            val ty = if (screen == UiScreen.MAIN_MENU) H * 0.74f else H - 112f
+            drawPanel((W - tw) / 2f, ty, tw, 40f, Color(0.08f, 0.05f, 0.16f, 0.90f), Color.GOLD)
+            drawCenteredText(fontSmall, toastText, (W - tw) / 2f, ty, tw, 40f)
         }
     }
 
     private fun resolveFishingCatch() {
         fishingActive = false
         if (fishingBarPos in 0.36f..0.66f) {
-            SoundFx.play("fish", 0.75f)
+            SoundFx.play("fish", 0.75f); tryUnlockAchievement("golden_fish")
             val roll = Random.nextFloat()
             val catchId = when {
                 roll < 0.14f -> 154 // Золотая Рыбка!
@@ -2233,13 +2423,38 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun renderMainMenu(W: Float, H: Float) {
+        menuPanoScroll = (menuPanoScroll + Gdx.graphics.deltaTime * 0.018f) % 1f
         spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); coverTex?.let { spriteBatch.draw(it, 0f, 0f, W, H) }; spriteBatch.end()
+        spriteBatch.begin()
+        spriteBatch.color = Color.WHITE
+        val pano = SpriteArt.menuPanoramaTex
+        if (pano != null) {
+            val u0 = menuPanoScroll
+            val u1 = u0 + 0.55f
+            spriteBatch.draw(pano, 0f, 0f, W, H, u0, 1f, u1, 0f)
+        } else {
+            coverTex?.let { spriteBatch.draw(it, 0f, 0f, W, H) }
+        }
+        SpriteArt.logoBannerTex?.let { lg ->
+            val lw = min(W * 0.52f, H * 0.96f)
+            val lh = lw * (lg.height.toFloat() / lg.width.toFloat())
+            spriteBatch.draw(lg, W * 0.44f + (W * 0.54f - lw) * 0.5f, H - lh - H * 0.04f, lw, lh)
+        }
+        val heroW = H * 0.28f; val heroH = heroW * 1.25f
+        val hFr = 2 + (((elapsed * 8f).toInt()) and 3)
+        SpriteArt.skinSprites[player.skinId]?.get(hFr)?.let { reg ->
+            spriteBatch.draw(reg, W * 0.64f, H * 0.14f, heroW, heroH)
+        }
+        SpriteArt.mobSprites["fox_pet"]?.get(((elapsed * 8f).toInt()) and 7)?.let { foxReg ->
+            val fSz = H * 0.18f
+            spriteBatch.draw(foxReg, W * 0.78f, H * 0.14f, fSz, fSz)
+        }
+        spriteBatch.end()
 
-        // БАННЕР АВТООБНОВЛЕНИЯ С GITHUB + СКАЧИВАНИЕ И УСТАНОВКА ПРЯМО В ИГРЕ!
+        val updH = max(48f, H * 0.088f)
         if (PlatformBridge.updateDownloading) {
-            val uw = min(W * 0.54f, 540f); val ux = W - uw - 18f; val uy = H - 84f
-            drawPanel(ux, uy, uw, 66f)
+            val uw = W * 0.46f; val ux = W - uw - 18f; val uy = 16f
+            drawPanel(ux, uy, uw, updH + 14f)
             spriteBatch.projectionMatrix = camUI.combined
             spriteBatch.begin()
             SpriteArt.barFramePatch.draw(spriteBatch, ux + 14f, uy + 10f, uw - 28f, 18f)
@@ -2247,50 +2462,66 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             spriteBatch.draw(SpriteArt.whitePx, ux + 18f, uy + 14f, (uw - 36f) * (PlatformBridge.updateProgress / 100f).coerceIn(0f, 1f), 10f)
             spriteBatch.color = Color.WHITE
             spriteBatch.end()
-            drawCenteredText(fontSmall, PlatformBridge.updateStatusText, ux, uy + 30f, uw, 30f)
+            drawCenteredText(fontSmall, PlatformBridge.updateStatusText, ux, uy + 30f, uw, updH - 14f)
         } else if (PlatformBridge.updateAvailable) {
-            val ghW = 104f
-            val uw = min(W * 0.46f, 440f)
-            val ux = W - uw - ghW - 26f; val uy = H - 76f
-            drawButton(ux, uy, uw, 56f, "ОБНОВИТЬ ДО ${PlatformBridge.updateTag} (СКАЧАТЬ)", green = true, centered = true) {
+            val ghW = max(116f, W * 0.11f)
+            val uw = min(W * 0.38f, 440f)
+            val uy = 16f
+            drawButton(W - uw - ghW - 26f, uy, uw, updH, "ОБНОВИТЬ ${PlatformBridge.updateTag}", green = true, centered = true) {
                 PlatformBridge.downloadAndInstallUpdate { msg -> Gdx.app.postRunnable { showToast(msg) } }
             }
-            drawButton(W - ghW - 16f, uy, ghW, 56f, "GitHub", blue = true, centered = true) {
+            drawButton(W - ghW - 16f, uy, ghW, updH, "GitHub", blue = true, centered = true) {
                 PlatformBridge.openBrowserUrl(PlatformBridge.REPO_RELEASES_URL)
             }
         } else {
-            glyphLayout.setText(fontSmall, PlatformBridge.updateStatusText)
-            val sw = glyphLayout.width + 26f
-            drawPanel(W - sw - 14f, H - 46f, sw, 34f, badge = true)
-            drawCenteredText(fontSmall, PlatformBridge.updateStatusText, W - sw - 14f, H - 46f, sw, 34f)
+            val sw = min(W * 0.34f, 320f); val sh = max(36f, H * 0.058f)
+            drawPanel(W - sw - 16f, 16f, sw, sh, badge = true)
+            drawCenteredText(fontSmall, PlatformBridge.updateStatusText, W - sw - 16f, 16f, sw, sh)
         }
 
-        val px = W * 0.03f; val py = H * 0.06f; val pw = W * 0.37f; val ph = H * 0.74f
+        val px = W * 0.03f; val py = H * 0.06f; val pw = W * 0.38f; val ph = H * 0.88f
         drawPanel(px, py, pw, ph)
 
         val pr = profiles.active
+        val hdrH = ph * 0.14f
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        fontSmall.draw(spriteBatch, "Rust Engine v6.5 • Редстоун + 55 Предметов", px + 16f, py + ph - 16f)
-        fontSmall.draw(spriteBatch, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 16f, py + ph - 42f)
+        drawFitTextBatch(fontSmall, "Rust Engine v6.6 • 8 FPS Анимации", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
+        fontSmall.color = Color(1f, 0.90f, 0.48f, 1f)
+        drawFitTextBatch(fontSmall, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 18f, py + ph - hdrH * 0.96f, pw - 36f, hdrH * 0.42f, centered = false)
+        fontSmall.color = Color.WHITE
         spriteBatch.end()
 
-        val bx = px + 16f; val bw = pw - 32f; val bh = (ph - 102f) / 5f - 8f
-        var by = py + ph - 72f - bh
-        drawButton(bx, by, bw, bh, "МОИ МИРЫ (ИГРАТЬ)", green = true, centered = true) { profiles.loadWorldSlots(); screen = UiScreen.WORLD_SLOTS }; by -= bh + 8f
-        drawButton(bx, by, bw, bh, "ПРОФИЛЬ И ДРУЗЬЯ (${pr.friends.size})", blue = true, centered = true) { screen = UiScreen.PROFILES_FRIENDS }; by -= bh + 8f
-        drawButton(bx, by, bw, bh, "ГАРДЕРОБ ГЕРОЕВ", centered = true) { screen = UiScreen.WARDROBE }; by -= bh + 8f
-        drawButton(bx, by, bw, bh, "МУЛЬТИПЛЕЕР (ОНЛАЙН / LAN)", centered = true) { screen = UiScreen.MULTIPLAYER }; by -= bh + 8f
+        val bx = px + 18f; val bw = pw - 36f
+        val areaH = ph - hdrH - 28f
+        val gap = 10f
+        val bh = (areaH - gap * 5f) / 6f
+        var by = py + ph - hdrH - 12f - bh
+        drawButton(bx, by, bw, bh, "МОИ МИРЫ (ИГРАТЬ)", green = true, centered = true) { profiles.loadWorldSlots(); screen = UiScreen.WORLD_SLOTS }; by -= bh + gap
+        drawButton(bx, by, bw, bh, "ПРОФИЛЬ И ДРУЗЬЯ (${pr.friends.size})", blue = true, centered = true) { screen = UiScreen.PROFILES_FRIENDS }; by -= bh + gap
+        drawButton(bx, by, bw, bh, "ДОСТИЖЕНИЯ (${pr.achievements.size}/${profiles.achievementDefs.size})", centered = true) { screen = UiScreen.ACHIEVEMENTS }; by -= bh + gap
+        drawButton(bx, by, bw, bh, "ГАРДЕРОБ И ПЛАЩИ", centered = true) { screen = UiScreen.WARDROBE }; by -= bh + gap
+        drawButton(bx, by, bw, bh, "МУЛЬТИПЛЕЕР (ОНЛАЙН / LAN)", centered = true) { screen = UiScreen.MULTIPLAYER }; by -= bh + gap
         drawButton(bx, by, bw, bh, "НАСТРОЙКИ И МОДЫ", centered = true) { settingsTab = 0; screen = UiScreen.SETTINGS_MODHUB }
     }
 
     private fun renderWorldSlotsScreen(W: Float, H: Float) {
-        drawPanel(W * 0.08f, H * 0.07f, W * 0.84f, H * 0.86f)
-        spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); font.draw(spriteBatch, "МОИ МИРЫ (250 СЛОЁВ)", W * 0.11f, H * 0.88f); spriteBatch.end()
-        drawButton(W * 0.78f, H * 0.82f, 118f, 44f, "Назад", centered = true) { screen = UiScreen.MAIN_MENU }
+        val px = W * 0.06f; val py = H * 0.05f; val pw = W * 0.88f; val ph = H * 0.90f
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
 
-        drawButton(W * 0.11f, H * 0.72f, W * 0.37f, 48f, "+ НОВЫЙ МИР (ВЫЖИВАНИЕ)", green = true, centered = true) {
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        drawFitTextBatch(font, "МОИ МИРЫ (250 СЛОЁВ)", px + 22f, topY, pw * 0.56f, topH, centered = false)
+        spriteBatch.end()
+        drawButton(px + pw - topH * 2.2f - 14f, topY, topH * 2.1f, topH, "Назад", red = true, centered = true) { screen = UiScreen.MAIN_MENU }
+        drawButton(px + pw - topH * 5.2f - 24f, topY, topH * 2.9f, topH, "Копия в Docs", blue = true, centered = true) {
+            showToast(PlatformBridge.backupWorldsToDocuments(storageRoot))
+        }
+
+        val actH = ph * 0.12f; val actY = topY - actH - 12f
+        val halfW = (pw - 48f) * 0.5f
+        drawButton(px + 18f, actY, halfW, actH, "+ НОВЫЙ МИР (ВЫЖИВАНИЕ)", green = true, centered = true) {
             Gdx.input.getTextInput(object : Input.TextInputListener {
                 override fun input(text: String) {
                     val nm = text.trim().take(20).ifBlank { "Мир_${profiles.worldSlots.size + 1}" }
@@ -2300,7 +2531,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 override fun canceled() {}
             }, "Название нового мира", "Мир_${profiles.worldSlots.size + 1}", "")
         }
-        drawButton(W * 0.50f, H * 0.72f, W * 0.39f, 48f, "+ НОВЫЙ МИР (СВОЙ СИД / ТВОРЧЕСТВО)", blue = true, centered = true) {
+        drawButton(px + 30f + halfW, actY, halfW, actH, "+ СВОЙ СИД / ТВОРЧЕСТВО", blue = true, centered = true) {
             Gdx.input.getTextInput(object : Input.TextInputListener {
                 override fun input(text: String) {
                     val sd = text.trim().toIntOrNull() ?: text.hashCode()
@@ -2311,24 +2542,119 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             }, "Введите Сид мира (число или слово)", "${Random.nextInt(10000, 99999)}", "")
         }
 
-        var y = H * 0.58f
+        val listTop = actY - 14f; val listH = listTop - (py + 16f)
+        val rowH = (listH - 40f) / 5f
         if (profiles.worldSlots.isEmpty()) {
-            drawButton(W * 0.11f, y, W * 0.78f, 54f, "БЫСТРЫЙ СТАРТ (Создать первый мир)", green = true, centered = true) {
+            drawButton(px + 18f, listTop - rowH * 1.4f, pw - 36f, rowH * 1.3f, "БЫСТРЫЙ СТАРТ (Создать первый мир)", green = true, centered = true) {
                 worldFileName = "world_default.vhworld"
                 startWorld(false, false, null, "Основной мир")
             }
         } else {
-            for (slot in profiles.worldSlots.take(5)) {
-                val modeTxt = if (slot.creative) "Творч." else "Выжив."
-                drawButton(W * 0.11f, y, W * 0.64f, 48f, "${slot.title} | $modeTxt | Сид:${slot.seed} | Сезон ${slot.seasonDays}д", green = true) {
+            val delW = max(124f, pw * 0.15f)
+            val mainW = pw - delW - 48f
+            profiles.worldSlots.take(5).forEachIndexed { idx, slot ->
+                val ry = listTop - (idx + 1) * (rowH + 8f) + 8f
+                val modeTxt = if (slot.creative) "Творчество" else "Выживание"
+                drawButton(px + 18f, ry, mainW, rowH, "${slot.title}  |  $modeTxt  |  Сид: ${slot.seed}", green = true) {
                     worldFileName = slot.fileName; currentWorldTitle = slot.title
                     startWorld(true, slot.creative, slot.seed, slot.title)
                 }
-                drawButton(W * 0.76f, y, W * 0.13f, 48f, "Удалить", red = true, centered = true) {
+                drawButton(px + 30f + mainW, ry, delW, rowH, "Удалить", red = true, centered = true) {
                     profiles.deleteWorldSlot(slot.fileName); showToast("Мир удалён")
                 }
-                y -= 56f
             }
+        }
+    }
+
+    private fun renderEnchantingScreen(W: Float, H: Float) {
+        val px = W * 0.07f; val py = H * 0.06f; val pw = W * 0.86f; val ph = H * 0.88f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+        val pr = profiles.active
+
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        drawFitTextBatch(font, "СТОЛ ЗАЧАРОВАНИЙ — РУНЫ", px + 22f, topY, pw * 0.56f, topH, centered = false)
+        fontSmall.draw(spriteBatch, "Аметисты: ${player.countItem(141)} | Рубины: ${player.countItem(142)} | Изумруды: ${player.countItem(118)}", px + pw * 0.44f, topY + topH * 0.56f)
+        spriteBatch.end()
+        drawButton(px + pw - topH * 1.2f - 12f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
+
+        val listTop = topY - 14f; val listH = listTop - (py + 16f)
+        val rowH = (listH - 36f) / 5f
+        val bw = pw - 36f
+        val bx = px + 18f
+
+        fun drawEnchRow(idx: Int, title: String, active: Boolean, costId: Int, costCnt: Int, onBuy: () -> Unit) {
+            val ry = listTop - (idx + 1) * (rowH + 8f) + 8f
+            val can = !active && (player.creative || player.countItem(costId) >= costCnt)
+            val cName = BlockRegistry.items[costId]?.name ?: ""
+            val lbl = if (active) "[АКТИВНО] $title" else "$title — Цена: $costCnt $cName"
+            drawButton(bx, ry, bw, rowH, lbl, green = active || can, blue = active) {
+                if (active) { showToast("Это зачарование уже активно!"); return@drawButton }
+                if (can && (player.creative || player.takeItem(costId, costCnt))) {
+                    onBuy(); profiles.saveProfiles(); SoundFx.play("enchant", 0.8f); tryUnlockAchievement("enchanter")
+                } else showToast("Не хватает: $costCnt $cName")
+            }
+        }
+
+        drawEnchRow(0, "АВТО-ПЛАВКА (Руды сразу падают готовыми слитками!)", pr.enchAutoSmelt, 142, 2) { pr.enchAutoSmelt = true; showToast("Наложено: Авто-плавка!") }
+        drawEnchRow(1, "УДАЧА Ур.${pr.enchFortune}/3 (До x${pr.enchFortune + 2} алмазов, рубинов и редстоуна!)", pr.enchFortune >= 3, 141, 2 + pr.enchFortune) { pr.enchFortune++; showToast("Наложено: Удача ур.${pr.enchFortune}!") }
+        drawEnchRow(2, "ПОДЖОГ (С животных сразу падают жареные стейки!)", pr.enchFireAspect, 142, 2) { pr.enchFireAspect = true; showToast("Наложено: Поджог!") }
+        drawEnchRow(3, "ВАМПИРИЗМ (+2 HP за каждый удар любым мечом!)", pr.enchLifesteal, 118, 4) { pr.enchLifesteal = true; showToast("Наложено: Вампиризм!") }
+        drawEnchRow(4, "СПЕШКА (+35% скорости копки всеми инструментами!)", pr.enchHaste, 141, 3) { pr.enchHaste = true; showToast("Наложено: Спешка!") }
+    }
+
+    private fun renderAchievementsScreen(W: Float, H: Float) {
+        val px = W * 0.05f; val py = H * 0.05f; val pw = W * 0.90f; val ph = H * 0.90f
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+        val pr = profiles.active
+
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        drawFitTextBatch(font, "КНИГА ДОСТИЖЕНИЙ (${pr.achievements.size}/${profiles.achievementDefs.size})", px + 22f, topY, pw * 0.72f, topH, centered = false)
+        spriteBatch.end()
+        drawButton(px + pw - topH * 2.1f - 14f, topY, topH * 2.0f, topH, "Назад", red = true, centered = true) { screen = if (world.worldActive) UiScreen.PLAYING else UiScreen.MAIN_MENU }
+
+        val gridTop = topY - 12f; val gridH = gridTop - (py + 16f)
+        val colW = (pw - 48f) * 0.5f
+        val rowH = (gridH - 40f) / 6f
+        profiles.achievementDefs.forEachIndexed { idx, ach ->
+            val unlocked = pr.achievements.contains(ach.id)
+            val cx = px + 18f + (idx % 2) * (colW + 12f)
+            val cy = gridTop - (idx / 2 + 1) * (rowH + 7f) + 7f
+            val status = if (unlocked) "[ГОТОВО] " else ""
+            drawButton(cx, cy, colW, rowH, "$status${ach.title}: ${ach.desc} (+${ach.rewardEmeralds} Изумр.)", green = unlocked) {}
+        }
+    }
+
+    private fun renderGolemBagScreen(W: Float, H: Float) {
+        val px = W * 0.05f; val py = H * 0.04f; val pw = W * 0.90f; val ph = H * 0.92f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.10f; val topY = py + ph - topH - 8f
+
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin(); drawFitTextBatch(font, "ГОЛЕМ-НОСИЛЬЩИК (18 СЛОТОВ)", px + 18f, topY, pw * 0.58f, topH, centered = false); spriteBatch.end()
+        drawButton(px + pw - topH * 1.15f - 12f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - pw * 0.22f - 22f, topY, pw * 0.22f, topH, "Сумка: стр.${chestBagPage + 1}/2", blue = true, centered = true) { chestBagPage = 1 - chestBagPage }
+
+        val availH = topY - (py + 22f)
+        val cell = min((pw - 36f) / 9f, (availH - 18f) / 5f)
+        val gx0 = px + (pw - cell * 9f) * 0.5f
+        for (i in 0 until 18) {
+            val sx = gx0 + (i % 9) * cell
+            val sy = topY - 8f - (i / 9 + 1) * cell
+            drawInteractiveSlot("golem", i, sx + 2f, sy + 2f, cell - 4f, player.golemBag[i])
+        }
+        val bagTop = topY - 8f - cell * 2f - 14f
+        val bagOff = chestBagPage * 27
+        for (i in 0 until 27) {
+            val invIdx = bagOff + i
+            val sx = gx0 + (i % 9) * cell
+            val sy = bagTop - (i / 9 + 1) * cell
+            drawInteractiveSlot("inv", invIdx, sx + 2f, sy + 2f, cell - 4f, player.slots[invIdx], selected = invIdx == player.selectedSlot)
         }
     }
 
@@ -2376,7 +2702,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             Gdx.input.getTextInput(object : Input.TextInputListener {
                 override fun input(text: String) {
                     val ok = profiles.addFriend(text, text)
-                    showToast(if (ok) "Друг $text добавлен!" else "Неверный или уже добавленный ID")
+                    if (ok) tryUnlockAchievement("online_friend"); showToast(if (ok) "Друг $text добавлен!" else "Неверный или уже добавленный ID")
                 }
                 override fun canceled() {}
             }, "Введите Friend ID друга (VH-XXXXX)", "VH-", "")
@@ -2409,6 +2735,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         "offhand" -> player.offhand
         "armor" -> if (idx in 0..3 && player.armor[idx] > 0) SlotItem(player.armor[idx], 1) else null
         "chest" -> openChestPos?.let { p -> world.getChest(p.first, p.second, p.third).getOrNull(idx) }
+        "golem" -> if (idx in 0 until 18) player.golemBag[idx] else null
         "furnace_in" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).input }
         "furnace_fuel" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).fuel }
         "furnace_out" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).output }
@@ -2427,6 +2754,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             "furnace_in" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).input = item }
             "furnace_fuel" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).fuel = item }
             "furnace_out" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).output = item }
+            "golem" -> if (idx in 0 until 18) player.golemBag[idx] = item
         }
     }
 
@@ -2507,6 +2835,14 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                         f.fuel = if (f.fuel == null) SlotItem(item.id, item.count) else SlotItem(item.id, f.fuel!!.count + item.count)
                         player.slots[idx] = null; SoundFx.play("pickup", 0.45f)
                     }
+                }
+            }
+            UiScreen.GOLEM_BAG -> {
+                if (zone == "golem" && item != null) {
+                    if (player.addItem(item.id, item.count)) { player.golemBag[idx] = null; SoundFx.play("pickup", 0.45f) }
+                } else if (zone == "inv" && item != null) {
+                    val emp = player.golemBag.indexOfFirst { it == null }
+                    if (emp >= 0) { player.golemBag[emp] = SlotItem(item.id, item.count); player.slots[idx] = null; SoundFx.play("pickup", 0.45f) }
                 }
             }
             else -> {}
@@ -2763,6 +3099,12 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
         for (ws in world.waystones.values) if (ws.dim == world.dimension) drawDot(ws.x.toFloat(), ws.y.toFloat(), 0.4f, 0.95f, 1f)
         if (customMarkerX != null && customMarkerY != null) drawDot(customMarkerX!!.toFloat(), customMarkerY!!.toFloat(), 1f, 0.5f, 0.1f)
+        if (entities.owlPet != null) {
+            for (k in world.chests.keys) {
+                val p = k.split(",")
+                if (p.size >= 2) drawDot((p[0].toIntOrNull() ?: 0).toFloat(), (p[1].toIntOrNull() ?: 0).toFloat(), 1f, 0.85f, 0.18f)
+            }
+        }
         spriteBatch.color = Color.WHITE
         spriteBatch.end()
         buttons += Pair(Rectangle(mmX, mmY, mmSz, mmSz)) { screen = UiScreen.FULL_MAP }
@@ -2821,19 +3163,20 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             val sw = min(W * 0.72f, 640f)
             val sx = (W - sw) / 2f; val sy = H * 0.24f
             drawPanel(sx, sy, sw, 48f, badge = true)
-            drawCenteredText(fontSmall, "Сон ($clock • x2.6) — сдвиньте стик или тапните, чтобы встать", sx, sy, sw, 48f)
+            drawCenteredText(fontSmall, "Сон ($clock • x4.5) — сдвиньте стик или тапните, чтобы встать", sx, sy, sw, 48f)
         }
 
-        // 6. Хотбар с пиксельной рамкой + HP / Броня / Еда
-        val slotSz = min(H * 0.125f, W * 0.64f / 10.5f).coerceIn(58f, 86f)
-        val hbW = slotSz * 10f + 20f; val hbX = (W - hbW) / 2f; val hbY = 12f
-        val ohX = hbX - slotSz - 10f; val ohY = hbY + 6f
+        // 6. БОЛЬШОЙ УДОБНЫЙ ХОТБАР (в ~1.8-2x крупнее под палец!) + HP / Броня / Еда
+        val slotSz = min(H * 0.165f, W * 0.65f / 10.6f).coerceIn(72f, 134f)
+        val hbW = slotSz * 10f + 22f; val hbX = (W - hbW) * 0.48f; val hbY = 10f
+        val ohX = max(8f, hbX - slotSz - 8f); val ohY = hbY + 6f
         offhandSlotRect.set(ohX, ohY, slotSz - 4f, slotSz - 4f)
         drawSlotBox(ohX, ohY, slotSz - 4f, player.offhand, selected = false)
 
-        val barsTopY = hbY + slotSz + 36f
+        val barH = max(22f, H * 0.032f)
+        val barsTopY = hbY + slotSz + barH + 34f
         if (!player.creative) {
-            val barY = hbY + slotSz + 12f; val barH = 18f; val halfW = hbW * 0.44f
+            val barY = hbY + slotSz + 12f; val halfW = hbW * 0.43f
             spriteBatch.projectionMatrix = camUI.combined
             spriteBatch.begin()
             SpriteArt.barFramePatch.draw(spriteBatch, hbX, barY, halfW, barH)
@@ -2846,39 +3189,67 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             spriteBatch.draw(SpriteArt.whitePx, fdX + 4f, barY + 4f, (halfW - 8f) * (player.food / player.maxFood).coerceIn(0f, 1f), barH - 8f)
             spriteBatch.color = Color.WHITE
             spriteBatch.end()
-            drawCenteredText(fontSmall, "HP ${player.hp.toInt()}/${player.maxHp.toInt()}", hbX, barY + barH + 2f, halfW, 18f)
-            drawCenteredText(fontSmall, "Бр.${player.getTotalArmor()}", hbX + halfW, barY + barH + 2f, hbW - halfW * 2f, 18f)
-            drawCenteredText(fontSmall, "Еда ${player.food.toInt()}/20", fdX, barY + barH + 2f, halfW, 18f)
+            drawCenteredText(fontSmall, "HP ${player.hp.toInt()}/${player.maxHp.toInt()}", hbX, barY + barH + 2f, halfW, 22f)
+            drawCenteredText(fontSmall, "Бр.${player.getTotalArmor()}", hbX + halfW, barY + barH + 2f, hbW - halfW * 2f, 22f)
+            drawCenteredText(fontSmall, "Еда ${player.food.toInt()}/20", fdX, barY + barH + 2f, halfW, 22f)
         }
 
-        // 7. УМНАЯ 1-ТАП КНОПКА ВЗАИМОДЕЙСТВИЯ (появляется ТОЛЬКО когда рядом Сундук / Печь / Кровать / Верстак!)
+        // 7. УМНАЯ 1-ТАП КНОПКА ВЗАИМОДЕЙСТВИЯ + ПАНЕЛЬ PRO-СТРОЙКИ И КОПКИ СПРАВА!
         if (!player.isSleeping) {
+            if (player.ridingMode.isNotEmpty()) {
+                val rw = max(170f, W * 0.16f)
+                drawButton((W - rw) * 0.5f, barsTopY + 58f, rw, max(44f, H * 0.072f), "СЛЕЗТЬ (${player.ridingMode})", red = true, centered = true) {
+                    player.ridingMode = ""; showToast("Вы спешились")
+                }
+            }
             val nearInter = findNearestInteractive(player.x, player.y, floor(player.z).toInt(), 2.75f)
             if (nearInter != null) {
                 val lbl = interactiveLabel(nearInter.id)
-                glyphLayout.setText(fontSmall, lbl)
-                val pw = max(168f, glyphLayout.width + 38f)
-                drawButton((W - pw) * 0.5f, barsTopY + 12f, pw, 42f, lbl, green = true, centered = true) {
+                val pw = max(210f, W * 0.22f)
+                drawButton((W - pw) * 0.5f, barsTopY + 8f, pw, max(46f, H * 0.078f), lbl, green = true, centered = true) {
                     performInteractOrPlace(nearInter)
                 }
             }
-            // Компактная кнопка «КОПАТЬ ВНИЗ» появляется ТОЛЬКО когда в руках Кирка — 1 тап роет ступеньку вглубь!
+
             val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
-            val rightStartX = hbX + hbW + 10f
-            val rightAvailW = (W - rightStartX - 10f).coerceIn(104f, 176f)
+            val rightX = hbX + hbW + 10f
+            val rightW = (W - rightX - 10f).coerceAtLeast(118f)
+            val btnHSmall = max(44f, slotSz * 0.54f)
+
             if (heldDef != null && !heldDef.isItem) {
-                val bmLbl = when (buildMode) { 0 -> "ПОЛ"; 2 -> "КРЫША"; else -> "СТЕНА" }
-                drawButton(rightStartX, hbY + 6f, rightAvailW, slotSz - 4f, bmLbl, blue = true, centered = true) {
-                    buildMode = (buildMode + 1) % 3
-                    ghostTarget = null
-                    showToast(when (buildMode) { 0 -> "Режим стройки: ПОЛ"; 2 -> "Режим стройки: КРЫША"; else -> "Режим стройки: СТЕНА" })
+                val bmLbl = when (buildMode) { 0 -> "ПОЛ"; 2 -> "КРЫША"; else -> "СТЕНА" } + (if (buildZOffset != 0) " ${if (buildZOffset > 0) "+$buildZOffset" else "$buildZOffset"}" else "")
+                drawButton(rightX, hbY + 6f, rightW, btnHSmall, bmLbl, blue = true, centered = true) {
+                    buildMode = (buildMode + 1) % 3; ghostTarget = null
                 }
-            }
-            if (heldDef?.toolType == "pick") {
-                drawButton(rightStartX, hbY + 6f, rightAvailW, slotSz - 4f, "ВНИЗ", blue = true, centered = true) {
+                val halfRw = (rightW - 6f) * 0.5f
+                drawButton(rightX, hbY + btnHSmall + 12f, halfRw, btnHSmall * 0.86f, "Z+", centered = true) {
+                    buildZOffset = (buildZOffset + 1).coerceIn(-2, 3); showToast("Высота стройки: ${if (buildZOffset >= 0) "+$buildZOffset" else "$buildZOffset"}")
+                }
+                drawButton(rightX + halfRw + 6f, hbY + btnHSmall + 12f, halfRw, btnHSmall * 0.86f, "Z-", centered = true) {
+                    buildZOffset = (buildZOffset - 1).coerceIn(-2, 3); showToast("Высота стройки: ${if (buildZOffset >= 0) "+$buildZOffset" else "$buildZOffset"}")
+                }
+                drawButton(rightX, hbY + btnHSmall * 1.92f + 16f, halfRw, btnHSmall * 0.82f, "ЗАЛИВ", green = boxFillMode, centered = true) {
+                    boxFillMode = !boxFillMode; if (boxFillMode) fastDemolishMode = false
+                    showToast(if (boxFillMode) "ЗАЛИВКА ВКЛ: тяните прямоугольник пальцем!" else "Заливка выключена")
+                }
+                drawButton(rightX + halfRw + 6f, hbY + btnHSmall * 1.92f + 16f, halfRw, btnHSmall * 0.82f, "СНОС", red = fastDemolishMode, centered = true) {
+                    fastDemolishMode = !fastDemolishMode; if (fastDemolishMode) boxFillMode = false
+                    showToast(if (fastDemolishMode) "СНОС ВКЛ: тап мгновенно возвращает блок!" else "Режим сноса выключен")
+                }
+            } else if (heldDef?.toolType == "pick") {
+                val digLbl = when (digActionMode) { 1 -> "ВВЕРХ"; 2 -> "ТОННЕЛЬ"; else -> "ВНИЗ" }
+                drawButton(rightX, hbY + 6f, rightW, btnHSmall, digLbl, blue = true, centered = true) {
                     val gx = floor(player.x + player.aimGx * 1.15f).toInt()
                     val gy = floor(player.y + player.aimGy * 1.15f).toInt()
-                    digStairStepAt(gx, gy, floor(player.z).toInt())
+                    val pz = floor(player.z).toInt()
+                    when (digActionMode) {
+                        1 -> digStairUpAt(gx, gy, pz)
+                        2 -> digTunnelForwardAt(gx, gy, pz)
+                        else -> digStairStepAt(gx, gy, pz)
+                    }
+                }
+                drawButton(rightX, hbY + btnHSmall + 12f, rightW, btnHSmall * 0.82f, "Режим: $digLbl", centered = true) {
+                    digActionMode = (digActionMode + 1) % 3
                 }
             }
         }
@@ -3449,9 +3820,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 drawButton(bx, H * 0.28f, bw, 50f, "Режим игры: ${if (player.creative) "Творчество" else "Выживание"}", centered = true) {
                     player.creative = !player.creative
                 }
-                drawButton(bx, H * 0.16f, bw, 46f, "Навыки, Опыт и Бестиарий", green = true, centered = true) {
-                    screen = UiScreen.BESTIARY_SKILLS
-                }
+                drawButton(bx, H * 0.16f, bw * 0.48f, max(48f, H * 0.08f), "Навыки и Бестиарий", green = true, centered = true) { screen = UiScreen.BESTIARY_SKILLS }
+                drawButton(bx + bw * 0.52f, H * 0.16f, bw * 0.48f, max(48f, H * 0.08f), "Книга Достижений", blue = true, centered = true) { screen = UiScreen.ACHIEVEMENTS }
             }
             else -> {
                 var my = H * 0.66f
@@ -3469,28 +3839,41 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun renderWardrobeScreen(W: Float, H: Float) {
-        drawPanel(W * 0.08f, H * 0.08f, W * 0.84f, H * 0.84f)
+        val px = W * 0.06f; val py = H * 0.05f; val pw = W * 0.88f; val ph = H * 0.90f
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
         spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); font.draw(spriteBatch, "ГАРДЕРОБ ИЗОМЕТРИЧЕСКИХ ГЕРОЕВ", W * 0.11f, H * 0.87f); spriteBatch.end()
-        drawButton(W * 0.78f, H * 0.82f, 110f, 42f, "Назад", centered = true) { screen = UiScreen.MAIN_MENU }
+        spriteBatch.begin(); drawFitTextBatch(font, "ГАРДЕРОБ ГЕРОЕВ И ПЛАЩИ", px + 22f, topY, pw * 0.65f, topH, centered = false); spriteBatch.end()
+        drawButton(px + pw - topH * 2.1f - 14f, topY, topH * 2.0f, topH, "Готово", green = true, centered = true) { screen = if (world.worldActive) UiScreen.PLAYING else UiScreen.MAIN_MENU }
 
-        drawPanel(W * 0.11f, H * 0.18f, W * 0.24f, H * 0.58f, Color(0.16f, 0.10f, 0.28f, 0.95f), Color.GOLD)
-        val previewFrame = when (((elapsed * 5f).toInt() % 4 + 4) % 4) { 1 -> 1; 3 -> 2; else -> 0 }
-        SpriteArt.skinSprites[player.skinId]?.get(previewFrame)?.let { reg ->
+        val leftW = pw * 0.32f
+        drawPanel(px + 18f, py + 18f, leftW, topY - py - 28f, badge = true)
+        val fr = 2 + (((elapsed * 8f).toInt()) and 3)
+        SpriteArt.skinSprites[player.skinId]?.get(fr)?.let { reg ->
+            val hw = min(leftW * 0.68f, ph * 0.34f); val hh = hw * 1.25f
             spriteBatch.projectionMatrix = camUI.combined
-            spriteBatch.begin(); spriteBatch.draw(reg, W * 0.15f, H * 0.25f, W * 0.16f, W * 0.20f); spriteBatch.end()
+            spriteBatch.begin()
+            spriteBatch.draw(reg, px + 18f + (leftW - hw) * 0.5f, py + ph * 0.28f, hw, hh)
+            spriteBatch.end()
+        }
+        val cloakNames = arrayOf("Без плаща", "Алый плащ", "Изумрудный плащ", "Теневой плащ", "Золотой плащ", "Крылья Небес")
+        drawButton(px + 28f, py + 30f, leftW - 20f, max(48f, ph * 0.10f), "Плащ: ${cloakNames[profiles.active.cloakId.coerceIn(0, 5)]}", blue = true, centered = true) {
+            profiles.active.cloakId = (profiles.active.cloakId + 1) % cloakNames.size
+            profiles.saveProfiles()
         }
 
-        var y = H * 0.67f
-        for (sk in SKINS_LIST) {
-            drawButton(W * 0.38f, y, W * 0.50f, 50f, "${sk.name} ${if (player.skinId == sk.id) "(Выбран)" else ""}", green = player.skinId == sk.id, centered = true) {
+        val rightX = px + leftW + 30f; val rightW = pw - leftW - 48f
+        val colW = (rightW - 14f) * 0.5f
+        val rowH = (topY - py - 48f) / 3f - 8f
+        SKINS_LIST.forEachIndexed { idx, sk ->
+            val cx = rightX + (idx % 2) * (colW + 14f)
+            val cy = topY - 14f - (idx / 2 + 1) * (rowH + 10f) + 10f
+            drawButton(cx, cy, colW, rowH, sk.name, green = player.skinId == sk.id, centered = true) {
                 player.skinId = sk.id; profiles.active.skinId = sk.id; profiles.saveProfiles(); showToast("Герой: ${sk.name}")
             }
-            y -= 58f
         }
     }
 
-    // ОНЛАЙН-МУЛЬТИПЛЕЕР (ИНТЕРНЕТ ПО КОДУ КОМНАТЫ ИЗ ЛЮБОГО ГОРОДА!) + LAN + IP!
     private fun renderMultiplayerScreen(W: Float, H: Float) {
         drawPanel(W * 0.08f, H * 0.06f, W * 0.84f, H * 0.88f)
         spriteBatch.projectionMatrix = camUI.combined
@@ -3555,7 +3938,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 }
 
                 // 0.5 Drag-and-Drop слотов в Инвентаре, Сундуке и Печи!
-                if (screen in setOf(UiScreen.INVENTORY, UiScreen.CHEST, UiScreen.FURNACE)) {
+                if (screen in setOf(UiScreen.INVENTORY, UiScreen.CHEST, UiScreen.FURNACE, UiScreen.GOLEM_BAG)) {
                     for (i in uiSlots.size - 1 downTo 0) {
                         val sl = uiSlots[i]
                         if (sl.rect.contains(ux, uy)) {
@@ -3621,7 +4004,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     dragBuildLastX = Int.MIN_VALUE
                     val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
                     if (heldDef != null && !heldDef.isItem) {
-                        ghostTarget = pickBuildCellOnPlane(screenX.toFloat(), screenY.toFloat())
+                        val c0 = pickBuildCellOnPlane(screenX.toFloat(), screenY.toFloat())
+                        ghostTarget = c0
+                        if (boxFillMode && c0 != null) { boxStartGx = c0.gx; boxStartGy = c0.gy; boxStartGz = c0.gz }
                     }
                     return true
                 }
@@ -3663,22 +4048,30 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     return true
                 }
 
-                // СВАЙП-СТРОЙКА (Drag-to-Build): веди пальцем с блоком в руке -> строй ровную стену / пол / крышу!
                 if (pointer == worldTouchPtr && pinchPtr2 == -1) {
                     val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
-                    if (heldDef != null && !heldDef.isItem) {
-                        val moved = hypot((screenX - worldTouchStartX).toDouble(), (screenY - worldTouchStartY).toDouble())
+                    val moved = hypot((screenX - worldTouchStartX).toDouble(), (screenY - worldTouchStartY).toDouble())
+                    if (heldDef != null && !heldDef.isItem && !fastDemolishMode) {
                         val cell = pickBuildCellOnPlane(screenX.toFloat(), screenY.toFloat())
                         ghostTarget = cell
-                        if (moved > 28.0 && cell != null) {
-                            isDragBuilding = true
-                            worldTouchHeldActed = true
-                            holdingMine = false
+                        if (boxFillMode && cell != null) {
+                            if (boxStartGx == Int.MIN_VALUE) { boxStartGx = cell.gx; boxStartGy = cell.gy; boxStartGz = cell.gz }
+                            if (moved > 22.0) { isDragBuilding = true; worldTouchHeldActed = true; holdingMine = false }
+                            return true
+                        } else if (moved > 28.0 && cell != null) {
+                            isDragBuilding = true; worldTouchHeldActed = true; holdingMine = false
                             if (cell.gx != dragBuildLastX || cell.gy != dragBuildLastY || cell.gz != dragBuildLastZ) {
                                 if (tryPlaceHeldBlockAt(cell.gx, cell.gy, cell.gz)) {
                                     dragBuildLastX = cell.gx; dragBuildLastY = cell.gy; dragBuildLastZ = cell.gz
                                 }
                             }
+                            return true
+                        }
+                    } else if (moved > 26.0 && (holdingMine || isDragMining || heldDef?.toolType in setOf("pick", "axe", "shovel"))) {
+                        val p = pickIsoBlock(screenX.toFloat(), screenY.toFloat())
+                        if (p != null && p.id > 0 && (p.gx != mineX || p.gy != mineY || p.gz != mineZ)) {
+                            isDragMining = true; worldTouchHeldActed = true
+                            performAttackOrMine(p, startContinuousHold = true)
                             return true
                         }
                     }
@@ -3713,8 +4106,19 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 if (pointer == pinchPtr2) { pinchPtr2 = -1; return true }
 
                 if (pointer == worldTouchPtr) {
-                    val wasShortTap = !worldTouchHeldActed && !isDragBuilding && (elapsed - worldTouchDownTime) < 0.24f
-                    worldTouchPtr = -1; holdingMine = false; mineProgress = 0f; isDragBuilding = false
+                    if (boxFillMode && isDragBuilding && boxStartGx != Int.MIN_VALUE && ghostTarget != null) {
+                        val gEnd = ghostTarget!!
+                        val x0 = min(boxStartGx, gEnd.gx); val x1 = min(x0 + 9, max(boxStartGx, gEnd.gx))
+                        val y0 = min(boxStartGy, gEnd.gy); val y1 = min(y0 + 9, max(boxStartGy, gEnd.gy))
+                        var placedCnt = 0
+                        for (bx in x0..x1) for (by in y0..y1) {
+                            if (tryPlaceHeldBlockAt(bx, by, boxStartGz)) placedCnt++
+                        }
+                        if (placedCnt >= 3) { tryUnlockAchievement("builder_box"); showToast("Заливка: поставлено блоков $placedCnt!") }
+                    }
+                    boxStartGx = Int.MIN_VALUE; boxStartGy = Int.MIN_VALUE
+                    val wasShortTap = !worldTouchHeldActed && !isDragBuilding && !isDragMining && (elapsed - worldTouchDownTime) < 0.24f
+                    worldTouchPtr = -1; holdingMine = false; mineProgress = 0f; isDragBuilding = false; isDragMining = false
                     if (wasShortTap && screen == UiScreen.PLAYING) {
                         handleWorldTap(screenX.toFloat(), screenY.toFloat())
                     }
@@ -3760,6 +4164,12 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val pick = pickIsoBlock(sx, sy) ?: return
                 targetPick = pick
 
+                entities.golemPet?.let { gl ->
+                    val gxS = isoToScreenX(gl.x, gl.y); val gyS = isoToScreenY(gl.x, gl.y, gl.z) + 22f
+                    if (hypot((gxS - tmpVec3.x).toDouble(), (gyS - tmpVec3.y).toDouble()) < 68.0) {
+                        SoundFx.play("chest", 0.65f); screen = UiScreen.GOLEM_BAG; return
+                    }
+                }
                 // 2. Тап по МОБУ / Торговцу
                 val tappedMob = entities.mobs.minByOrNull { m ->
                     val mx = isoToScreenX(m.x, m.y); val my = isoToScreenY(m.x, m.y, m.z) + 22f
@@ -3769,6 +4179,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     val mx = isoToScreenX(tappedMob.x, tappedMob.y); val my = isoToScreenY(tappedMob.x, tappedMob.y, tappedMob.z) + 22f
                     if (hypot((mx - tmpVec3.x).toDouble(), (my - tmpVec3.y).toDouble()) < 76.0) {
                         if (tappedMob.type == "trader") { SoundFx.play("chest", 0.6f); screen = UiScreen.TRADER_QUESTS; return }
+                        if (tappedMob.type == "golem_pet") { SoundFx.play("chest", 0.6f); screen = UiScreen.GOLEM_BAG; return }
+                        if (tappedMob.type == "deer" && player.ridingMode.isEmpty() && (player.slots[player.selectedSlot]?.id ?: 0) == 113) {
+                            player.takeItem(113, 1); player.ridingMode = "deer"; SoundFx.play("levelup", 0.6f); tryUnlockAchievement("rider")
+                            showToast("Вы оседлали Оленя! (+65% скорости!)"); return
+                        }
                         val held = player.slots[player.selectedSlot]
                         if (tappedMob.type == "wolf" && !tappedMob.tamed && held != null && (held.id == 115 || held.id == 114 || held.id == 157)) {
                             if (player.takeItem(held.id, 1)) {
@@ -3801,6 +4216,12 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val held = player.slots[player.selectedSlot]
                 val hDef = held?.let { BlockRegistry.items[it.id] }
                 if (hDef != null && !hDef.isItem) {
+                    if (fastDemolishMode && pick.id > 0 && (BlockRegistry.items[pick.id]?.hardness ?: 999f) < 900f) {
+                        val drop = BlockRegistry.items[pick.id]?.dropId ?: pick.id
+                        setWorldBlock(pick.gx, pick.gy, pick.gz, 0)
+                        if (!player.creative && drop > 0) player.addItem(drop, 1)
+                        SoundFx.play("pickup", 0.55f); return
+                    }
                     // Быстрый откат последнего поставленного блока
                     if ((elapsed - lastPlacedTime) <= 2.2f && pick.gx == lastPlacedX && pick.gy == lastPlacedY && pick.gz == lastPlacedZ && pick.id == lastPlacedId && pick.id > 0) {
                         setWorldBlock(pick.gx, pick.gy, pick.gz, 0)
