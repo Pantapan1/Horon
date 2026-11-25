@@ -11,12 +11,31 @@ android {
         applicationId "com.voxelhorizon.nativegame"
         minSdk 24
         targetSdk 34
-        versionCode 63
-        versionName "6.3.0"
+        versionCode 64
+        versionName "6.4.0"
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file("voxelhorizon.jks")
+            storePassword "voxelhorizon2026"
+            keyAlias "voxelhorizon"
+            keyPassword "voxelhorizon2026"
+        }
+        release {
+            storeFile file("voxelhorizon.jks")
+            storePassword "voxelhorizon2026"
+            keyAlias "voxelhorizon"
+            keyPassword "voxelhorizon2026"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
         }
     }

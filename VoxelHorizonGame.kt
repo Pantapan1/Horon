@@ -37,6 +37,7 @@ enum class UiScreen {
 
 data class IsoPick(val gx: Int, val gy: Int, val gz: Int, val id: Int)
 data class UiSlotHit(val zone: String, val index: Int, val rect: Rectangle)
+data class LeafDecayEntry(val x: Int, val y: Int, val z: Int, var timer: Float)
 
 class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
@@ -100,7 +101,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private var autoAttackCd = 0f
     var baseWalkSpeed = 5.0f
     var cameraZoom = 0.85f
-    var worldFileName = "world_iso_v63.vhworld"
+    var worldFileName = "world_iso_v64.vhworld"
 
     // Стройка и копка v6.3: режим (0=ПОЛ, 1=СТЕНА, 2=КРЫША), свайп-стройка, быстрый откат!
     private var buildMode = 1 // 0=ПОЛ, 1=СТЕНА, 2=КРЫША
@@ -127,6 +128,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     // Вкладки и страницы новых визуальных экранов
     private var invTab = 0 // 0 = Сумка (54), 1 = Крафт 2x2
     private var chestBagPage = 0 // 0 = слоты 0..26, 1 = слоты 27..53
+    private var furnaceBagPage = 0
+    private val decayingLeaves = mutableListOf<LeafDecayEntry>()
     private var wbSelectedIdx = 0
     private var wbPage = 0
     var currentWorldTitle = "Мой мир"
@@ -290,7 +293,23 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun isoToScreenX(gx: Float, gy: Float): Float = (gx - gy) * WorldIso.TW
-    private fun isoToScreenY(gx: Float, gy: Float, gz: Float): Float = -(gx + gy) * WorldIso.TH + gz * WorldIso.ZH
+    // Экранный Y для сущностей (центр тайла (gx+0.5, gy+0.5) совпадает 1:1 с центром верхней грани блока!)
+    private fun isoToScreenY(gx: Float, gy: Float, gz: Float): Float = -(gx + gy - 1f) * WorldIso.TH + gz * WorldIso.ZH
+    // Экранный Y для целочисленных координат блоков (Ghost Preview, выделение блока)
+    private fun blockScreenY(gx: Int, gy: Int, gz: Int): Float = -(gx + gy) * WorldIso.TH + gz * WorldIso.ZH
+
+    // Умная диагональ отрисовки сущности: не даёт плоскому полу спереди срезать ноги героя и лисёнка!
+    private fun entityDiagIndex(x: Float, y: Float, z: Float, minSum: Int): Int {
+        val gx = floor(x).toInt(); val gy = floor(y).toInt(); val gz = floor(z).toInt()
+        var di = (gx + gy) - minSum
+        val fx = x - gx; val fy = y - gy
+        if (fx + fy > 0.96f) {
+            val wallA = BlockRegistry.items[world.getBlock(gx + 1, gy, gz)]?.solid == true
+            val wallB = BlockRegistry.items[world.getBlock(gx, gy + 1, gz)]?.solid == true
+            if (!wallA && !wallB) di += 1
+        }
+        return di
+    }
 
     fun startWorld(loadSaved: Boolean, creativeMode: Boolean, customSeed: Int? = null, titleIn: String? = null) {
         val f = File(File(storageRoot, "worlds"), worldFileName)
@@ -318,7 +337,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
         if (titleIn != null) currentWorldTitle = titleIn
         profiles.registerWorldSlot(WorldSlotInfo(worldFileName, currentWorldTitle, world.seed, player.creative, entities.seasonLengthDays, System.currentTimeMillis()))
-        lastFogGx = Int.MIN_VALUE; lastFogGy = Int.MIN_VALUE; fishingActive = false
+        lastFogGx = Int.MIN_VALUE; lastFogGy = Int.MIN_VALUE; fishingActive = false; decayingLeaves.clear()
         manualLayerOffset = 0
         camWorld.position.set(isoToScreenX(player.x, player.y), isoToScreenY(player.x, player.y, player.z), 0f)
         screen = UiScreen.PLAYING
@@ -1009,8 +1028,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             if (hDef?.aoeMine == true) {
                 breakSingle(mineX + 1, mineY, mineZ); breakSingle(mineX, mineY + 1, mineZ); breakSingle(mineX + 1, mineY + 1, mineZ)
             }
-            if (bId in intArrayOf(5, 27, 45, 46) && hDef?.toolType == "axe") {
-                for (dz in 1..4) if (world.getBlock(mineX, mineY, mineZ + dz) == bId) breakSingle(mineX, mineY, mineZ + dz)
+            // Рубка ствола дерева целиком + автоматическое осыпание листвы после рубки!
+            if (bId in intArrayOf(5, 27, 45, 46)) {
+                for (dz in 1..5) if (world.getBlock(mineX, mineY, mineZ + dz) == bId) breakSingle(mineX, mineY, mineZ + dz)
+                scheduleUnsupportedLeafDecay(mineX, mineY, mineZ)
             }
             // Авто-тоннель 1x2 в шахте: пробиваешь блок на уровне ног -> блок на уровне головы ломается сам!
             if (hDef?.toolType == "pick" && (isCutawayActive || player.z < WorldIso.SEA_Z - 1) && mineZ == floor(player.z).toInt()) {
@@ -1065,6 +1086,49 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         if (player.takeItem(s.id, 1)) {
             entities.spawnDrop(s.id, 1, player.x + player.aimGx * 0.8f, player.y + player.aimGy * 0.8f, player.z, player.aimGx * 2.5f, player.aimGy * 2.5f)
             showToast("Выброшено: ${BlockRegistry.items[s.id]?.name}")
+        }
+    }
+
+    private fun hasNearbyTrunk(lx: Int, ly: Int, lz: Int): Boolean {
+        for (dx in -2..2) for (dy in -2..2) for (dz in -2..1) {
+            val b = world.getBlock(lx + dx, ly + dy, lz + dz)
+            if (b in intArrayOf(5, 27, 45, 46)) return true
+        }
+        return false
+    }
+
+    private fun scheduleUnsupportedLeafDecay(cx: Int, cy: Int, cz: Int) {
+        for (dz in -1..6) for (dx in -2..2) for (dy in -2..2) {
+            val lx = cx + dx; val ly = cy + dy; val lz = cz + dz
+            if (lz !in 1 until WorldIso.MAX_Z) continue
+            val b = world.getBlock(lx, ly, lz)
+            if ((b == 6 || b == 44) && !hasNearbyTrunk(lx, ly, lz)) {
+                if (decayingLeaves.none { it.x == lx && it.y == ly && it.z == lz }) {
+                    decayingLeaves.add(LeafDecayEntry(lx, ly, lz, 0.25f + Random.nextFloat() * 1.45f))
+                }
+            }
+        }
+    }
+
+    private fun updateDecayingLeaves(dt: Float) {
+        if (decayingLeaves.isEmpty()) return
+        val it = decayingLeaves.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            e.timer -= dt
+            if (e.timer <= 0f) {
+                it.remove()
+                val b = world.getBlock(e.x, e.y, e.z)
+                if ((b == 6 || b == 44) && !hasNearbyTrunk(e.x, e.y, e.z)) {
+                    setWorldBlock(e.x, e.y, e.z, 0)
+                    entities.spawnBlockParticles(e.x, e.y, e.z, if (b == 44) 0xF8A6CC else 0x4CB848, 4)
+                    if (!player.creative) {
+                        val r = Random.nextFloat()
+                        if (r < 0.08f) entities.spawnDrop(113, 1, e.x + 0.5f, e.y + 0.5f, e.z.toFloat()) // Яблоко!
+                        else if (r < 0.16f) entities.spawnDrop(105, 1, e.x + 0.5f, e.y + 0.5f, e.z.toFloat()) // Палка!
+                    }
+                }
+            }
         }
     }
 
@@ -1269,6 +1333,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
         updateOstMusic()
 
+        if (world.worldActive && screen !in setOf(UiScreen.MAIN_MENU, UiScreen.WORLD_SLOTS, UiScreen.PAUSE, UiScreen.DEATH)) {
+            updateFurnaces(dt)
+            updateDecayingLeaves(dt)
+        }
+
         if (screen == UiScreen.PLAYING) {
             // Долгое удержание пальца на блоке (> 0.20с) запускает непрерывную копку!
             val heldIsBlockNow = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id]?.isItem == false } == true
@@ -1307,7 +1376,6 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 if (fishingBarPos <= 0f) { fishingBarPos = 0f; fishingBarDir = 1f }
             }
             updatePlayerTemperatureAndBuffs(dt)
-            updateFurnaces(dt)
             updateMining(dt)
             entities.update(
                 dt, world, player,
@@ -1428,25 +1496,25 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
         for (m in entities.mobs) {
             if (m.z <= zMax + 1 && m.z >= zMin - 1) {
-                val di = (floor(m.x).toInt() + floor(m.y).toInt()) - minSum
+                val di = entityDiagIndex(m.x, m.y, m.z, minSum)
                 if (di in 0 until diagCount) mobsByDiag[di].add(m)
             }
         }
         entities.foxPet?.let { pt ->
-            val di = (floor(pt.x).toInt() + floor(pt.y).toInt()) - minSum
+            val di = entityDiagIndex(pt.x, pt.y, pt.z, minSum)
             if (di in 0 until diagCount) mobsByDiag[di].add(pt)
         }
         for (d in entities.drops) {
             if (d.z <= zMax + 1 && d.z >= zMin - 1) {
-                val di = (floor(d.x).toInt() + floor(d.y).toInt()) - minSum
+                val di = entityDiagIndex(d.x, d.y, d.z, minSum)
                 if (di in 0 until diagCount) dropsByDiag[di].add(d)
             }
         }
         for (rp in netMp.remotePlayers.values) {
-            val di = (floor(rp.x).toInt() + floor(rp.y).toInt()) - minSum
+            val di = entityDiagIndex(rp.x, rp.y, rp.z, minSum)
             if (di in 0 until diagCount) remoteByDiag[di].add(rp)
         }
-        val playerDiag = (pGx + pGy) - minSum
+        val playerDiag = entityDiagIndex(player.x, player.y, player.z, minSum).coerceIn(0, max(0, diagCount - 1))
 
         val atlas = BlockRegistry.atlasTexture
         spriteBatch.projectionMatrix = camWorld.combined
@@ -1603,7 +1671,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 IsoPick(fx, fy, gz, world.getBlock(fx, fy, gz))
             }
             val gsX = isoToScreenX(gPick.gx.toFloat(), gPick.gy.toFloat())
-            val gsY = isoToScreenY(gPick.gx.toFloat(), gPick.gy.toFloat(), gPick.gz.toFloat())
+            val gsY = blockScreenY(gPick.gx, gPick.gy, gPick.gz)
             val gsTop = gsY + ZH
             val pulseG = 0.28f + sin(elapsed * 6f) * 0.08f
             val canPlaceG = world.getBlock(gPick.gx, gPick.gy, gPick.gz) == 0 || BlockRegistry.items[world.getBlock(gPick.gx, gPick.gy, gPick.gz)]?.isLiquid == true
@@ -1618,7 +1686,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         targetPick?.let { sel ->
             if (screen == UiScreen.PLAYING && !player.isSleeping && holdingMine) {
                 val sx = isoToScreenX(sel.gx.toFloat(), sel.gy.toFloat())
-                val syTop = isoToScreenY(sel.gx.toFloat(), sel.gy.toFloat(), (sel.gz + 1).toFloat())
+                val syTop = blockScreenY(sel.gx, sel.gy, sel.gz + 1)
                 drawIsoQuad(SpriteArt.whitePx, sx - TW, syTop, sx, syTop + TH, sx + TW, syTop, sx, syTop - TH, Color.toFloatBits(1f, 0.86f, 0.30f, 0.30f), 0f, 0f, 1f, 1f)
                 if (mineProgress > 0.02f) {
                     spriteBatch.setColor(0.08f, 0.06f, 0.12f, 0.88f); spriteBatch.draw(SpriteArt.whitePx, sx - 26f, syTop + 18f, 52f, 9f)
@@ -1709,10 +1777,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         // Тень слегка уменьшается в прыжке шага
         val shSc = 1f - (hopY / 42f)
         spriteBatch.setColor(1f, 1f, 1f, 0.74f)
-        spriteBatch.draw(SpriteArt.shadowTex, px - 22f * shSc, py - 10f, 44f * shSc, 18f * shSc)
+        spriteBatch.draw(SpriteArt.shadowTex, px - 22f * shSc, py - 8f, 44f * shSc, 16f * shSc)
 
         if (hurtFlash > 0f) spriteBatch.setColor(1f, 0.40f, 0.40f, 1f) else spriteBatch.color = Color.WHITE
-        spriteBatch.draw(frames[frameIdx], px - w * 0.5f + side * lunge * 6f, py - 12f + hopY, w * 0.5f, 12f, w, h, scaleX, scaleY, rot)
+        spriteBatch.draw(frames[frameIdx], px - w * 0.5f + side * lunge * 6f, py - 9f + hopY, w * 0.5f, 9f, w, h, scaleX, scaleY, rot)
         spriteBatch.color = Color.WHITE
 
         // Видимая Броня и Щит прямо на герое!
@@ -1795,7 +1863,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
         val shSc = (1f - hopY / 50f).coerceIn(0.45f, 1.1f)
         spriteBatch.setColor(1f, 1f, 1f, 0.70f)
-        spriteBatch.draw(SpriteArt.shadowTex, mx - mSz * 0.36f * shSc, my - 10f, mSz * 0.72f * shSc, 20f * shSc)
+        spriteBatch.draw(SpriteArt.shadowTex, mx - mSz * 0.36f * shSc, my - 8f, mSz * 0.72f * shSc, 16f * shSc)
 
         when {
             m.hurtFlash > 0f -> spriteBatch.setColor(1f, 0.35f, 0.35f, 1f)
@@ -1804,7 +1872,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             m.fuse > 0f -> spriteBatch.setColor(1f, 1f, 0.45f, 1f)
             else -> spriteBatch.color = Color.WHITE
         }
-        spriteBatch.draw(reg, mx - mSz * 0.5f + side * atkLunge * 7f, my - 12f + hopY, mSz * 0.5f, 12f, mSz, mSz, side * scX, scY, rot)
+        spriteBatch.draw(reg, mx - mSz * 0.5f + side * atkLunge * 7f, my - 6f + hopY, mSz * 0.5f, 6f, mSz, mSz, side * scX, scY, rot)
         spriteBatch.color = Color.WHITE
 
         if (m.hp < m.maxHp) {
@@ -2000,12 +2068,27 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin(); coverTex?.let { spriteBatch.draw(it, 0f, 0f, W, H) }; spriteBatch.end()
 
-        // БАННЕР АВТООБНОВЛЕНИЯ С GITHUB (https://github.com/Pantapan1/Horon)
-        if (PlatformBridge.updateAvailable) {
-            val uw = min(W * 0.52f, 520f)
-            val ux = W - uw - 18f; val uy = H - 78f
-            drawButton(ux, uy, uw, 58f, "НОВАЯ ВЕРСИЯ ${PlatformBridge.updateTag}! НАЖМИТЕ ДЛЯ ОБНОВЛЕНИЯ", green = true, centered = true) {
-                PlatformBridge.openBrowserUrl(PlatformBridge.updateUrl)
+        // БАННЕР АВТООБНОВЛЕНИЯ С GITHUB + СКАЧИВАНИЕ И УСТАНОВКА ПРЯМО В ИГРЕ!
+        if (PlatformBridge.updateDownloading) {
+            val uw = min(W * 0.54f, 540f); val ux = W - uw - 18f; val uy = H - 84f
+            drawPanel(ux, uy, uw, 66f)
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            SpriteArt.barFramePatch.draw(spriteBatch, ux + 14f, uy + 10f, uw - 28f, 18f)
+            spriteBatch.setColor(0.24f, 0.90f, 0.46f, 1f)
+            spriteBatch.draw(SpriteArt.whitePx, ux + 18f, uy + 14f, (uw - 36f) * (PlatformBridge.updateProgress / 100f).coerceIn(0f, 1f), 10f)
+            spriteBatch.color = Color.WHITE
+            spriteBatch.end()
+            drawCenteredText(fontSmall, PlatformBridge.updateStatusText, ux, uy + 30f, uw, 30f)
+        } else if (PlatformBridge.updateAvailable) {
+            val ghW = 104f
+            val uw = min(W * 0.46f, 440f)
+            val ux = W - uw - ghW - 26f; val uy = H - 76f
+            drawButton(ux, uy, uw, 56f, "ОБНОВИТЬ ДО ${PlatformBridge.updateTag} (СКАЧАТЬ)", green = true, centered = true) {
+                PlatformBridge.downloadAndInstallUpdate { msg -> Gdx.app.postRunnable { showToast(msg) } }
+            }
+            drawButton(W - ghW - 16f, uy, ghW, 56f, "GitHub", blue = true, centered = true) {
+                PlatformBridge.openBrowserUrl(PlatformBridge.REPO_RELEASES_URL)
             }
         } else {
             glyphLayout.setText(fontSmall, PlatformBridge.updateStatusText)
@@ -2020,7 +2103,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val pr = profiles.active
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        fontSmall.draw(spriteBatch, "Rust Engine v6.3 • 54 Слота + Плавный Онлайн", px + 16f, py + ph - 16f)
+        fontSmall.draw(spriteBatch, "Rust Engine v6.4 • Автообновление + 250 Слоёв", px + 16f, py + ph - 16f)
         fontSmall.draw(spriteBatch, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 16f, py + ph - 42f)
         spriteBatch.end()
 
@@ -2611,20 +2694,18 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             }
             // Компактная кнопка «КОПАТЬ ВНИЗ» появляется ТОЛЬКО когда в руках Кирка — 1 тап роет ступеньку вглубь!
             val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
+            val rightStartX = hbX + hbW + 10f
+            val rightAvailW = (W - rightStartX - 10f).coerceIn(104f, 176f)
             if (heldDef != null && !heldDef.isItem) {
-                val bmLbl = when (buildMode) { 0 -> "РЕЖ: ПОЛ"; 2 -> "РЕЖ: КРЫША"; else -> "РЕЖ: СТЕНА" }
-                val bmW = max(142f, slotSz * 2.4f)
-                val bmX = min(W - bmW - 14f, hbX + hbW + 12f)
-                drawButton(bmX, hbY + 6f, bmW, slotSz - 4f, bmLbl, blue = true, centered = true) {
+                val bmLbl = when (buildMode) { 0 -> "ПОЛ"; 2 -> "КРЫША"; else -> "СТЕНА" }
+                drawButton(rightStartX, hbY + 6f, rightAvailW, slotSz - 4f, bmLbl, blue = true, centered = true) {
                     buildMode = (buildMode + 1) % 3
                     ghostTarget = null
-                    showToast(when (buildMode) { 0 -> "Режим стройки: ПОЛ"; 2 -> "Режим стройки: КРЫША"; else -> "Режим стройки: СТЕНА (за стенами тоже работает!)" })
+                    showToast(when (buildMode) { 0 -> "Режим стройки: ПОЛ"; 2 -> "Режим стройки: КРЫША"; else -> "Режим стройки: СТЕНА" })
                 }
             }
             if (heldDef?.toolType == "pick") {
-                val digW = max(138f, slotSz * 2.3f)
-                val digX = min(W - digW - 14f, hbX + hbW + 12f)
-                drawButton(digX, hbY + 6f, digW, slotSz - 4f, "КОПАТЬ ВНИЗ", blue = true, centered = true) {
+                drawButton(rightStartX, hbY + 6f, rightAvailW, slotSz - 4f, "ВНИЗ", blue = true, centered = true) {
                     val gx = floor(player.x + player.aimGx * 1.15f).toInt()
                     val gy = floor(player.y + player.aimGy * 1.15f).toInt()
                     digStairStepAt(gx, gy, floor(player.z).toInt())
@@ -3014,51 +3095,72 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private fun renderFurnaceScreen(W: Float, H: Float) {
         val pos = openFurnacePos ?: return
         val f = world.getFurnace(pos.first, pos.second, pos.third)
-        val px = W * 0.08f; val py = H * 0.05f; val pw = W * 0.84f; val ph = H * 0.90f
+        val px = W * 0.06f; val py = H * 0.04f; val pw = W * 0.88f; val ph = H * 0.92f
         activePanelBounds.set(px, py, pw, ph)
         drawPanel(px, py, pw, ph)
-        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+        val topH = ph * 0.10f; val topY = py + ph - topH - 8f
 
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin(); font.draw(spriteBatch, "ПЕЧЬ — ПЕРЕПЛАВКА", px + 20f, topY + topH * 0.72f); spriteBatch.end()
-        drawButton(px + pw - topH * 1.15f - 14f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { openFurnacePos = null; screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - 12f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { openFurnacePos = null; screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - pw * 0.22f - 22f, topY, pw * 0.22f, topH, "Сумка: стр.${furnaceBagPage + 1}/2", blue = true, centered = true) {
+            furnaceBagPage = 1 - furnaceBagPage
+        }
 
-        // Верхняя часть: визуальная станция печи (Сырьё + Огонь + Топливо  ==>  Готово!)
-        val stH = ph * 0.44f; val stY = topY - stH - 8f
-        drawPanel(px + 18f, stY, pw - 36f, stH, badge = true)
-        val slSz = min(stH * 0.34f, 68f)
-        val inX = px + pw * 0.24f; val inY = stY + stH - slSz - 16f
-        val flY = stY + 16f
-        val outX = px + pw * 0.66f; val outY = stY + (stH - slSz) * 0.5f
+        // Верхняя станция печи: аккуратная горизонтальная компоновка с большими слотами и живыми барами!
+        val stH = ph * 0.40f; val stY = topY - stH - 8f
+        drawPanel(px + 16f, stY, pw - 32f, stH, badge = true)
 
-        drawInteractiveSlot("furnace_in", 0, inX, inY, slSz, f.input)
-        drawInteractiveSlot("furnace_fuel", 0, inX, flY, slSz, f.fuel)
-        drawInteractiveSlot("furnace_out", 0, outX, outY, slSz, f.output, selected = f.output != null)
+        val slSz = min(stH * 0.42f, 82f)
+        val inX = px + pw * 0.16f
+        val fuelX = inX + slSz + 26f
+        val slotsY = stY + stH * 0.42f
+        val outX = px + pw * 0.62f
 
-        // Визуальный индикатор огня и прогресс-стрелка!
+        drawInteractiveSlot("furnace_in", 0, inX, slotsY, slSz, f.input)
+        drawInteractiveSlot("furnace_fuel", 0, fuelX, slotsY, slSz, f.fuel)
+        drawInteractiveSlot("furnace_out", 0, outX, slotsY, slSz, f.output, selected = f.output != null)
+
         val burnFrac = (f.burn / max(1f, f.maxBurn)).coerceIn(0f, 1f)
         val cookFrac = (f.cook / 100f).coerceIn(0f, 1f)
+
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        fontSmall.draw(spriteBatch, "Сырьё", inX - 78f, inY + slSz * 0.65f)
-        fontSmall.draw(spriteBatch, "Топливо", inX - 96f, flY + slSz * 0.65f)
-        fontSmall.draw(spriteBatch, "Готово", outX + slSz + 12f, outY + slSz * 0.65f)
-        // Полоска огня между Сырьём и Топливом
-        val fireY = flY + slSz + 8f; val fireH = max(12f, inY - fireY - 8f)
-        SpriteArt.barFramePatch.draw(spriteBatch, inX, fireY, slSz, fireH)
+        // Подписи над слотами
+        glyphLayout.setText(fontSmall, "Сырьё")
+        fontSmall.draw(spriteBatch, "Сырьё", inX + (slSz - glyphLayout.width) * 0.5f, slotsY + slSz + 22f)
+        glyphLayout.setText(fontSmall, "Топливо")
+        fontSmall.draw(spriteBatch, "Топливо", fuelX + (slSz - glyphLayout.width) * 0.5f, slotsY + slSz + 22f)
+        glyphLayout.setText(fontSmall, "Готово")
+        fontSmall.draw(spriteBatch, "Готово", outX + (slSz - glyphLayout.width) * 0.5f, slotsY + slSz + 22f)
+
+        // Компактная полоска ОГНЯ под слотами Сырьё + Топливо (с цифрой %)
+        val fireW = (fuelX + slSz) - inX; val fireH = 22f; val fireY = stY + 20f
+        SpriteArt.barFramePatch.draw(spriteBatch, inX, fireY, fireW, fireH)
         if (burnFrac > 0.01f) {
-            spriteBatch.setColor(1f, 0.55f, 0.14f, 1f)
-            spriteBatch.draw(SpriteArt.whitePx, inX + 4f, fireY + 4f, (slSz - 8f) * burnFrac, fireH - 8f)
+            spriteBatch.setColor(1f, 0.56f, 0.14f, 1f)
+            spriteBatch.draw(SpriteArt.whitePx, inX + 4f, fireY + 4f, (fireW - 8f) * burnFrac, fireH - 8f)
+            spriteBatch.color = Color.WHITE
         }
-        // Полоска прогресса переплавки между входом и выходом
-        val arrX = inX + slSz + 24f; val arrW = outX - arrX - 24f; val arrY = outY + slSz * 0.35f; val arrH = 22f
-        SpriteArt.barFramePatch.draw(spriteBatch, arrX, arrY, arrW, arrH)
-        spriteBatch.setColor(0.28f, 0.92f, 0.50f, 1f)
-        spriteBatch.draw(SpriteArt.whitePx, arrX + 4f, arrY + 4f, (arrW - 8f) * cookFrac, arrH - 8f)
-        spriteBatch.color = Color.WHITE
+        fontSmall.draw(spriteBatch, "Огонь: ${(burnFrac * 100).toInt()}%", inX, fireY + fireH + 20f)
+
+        // Главная полоса ПРОГРЕССА ПЛАВКИ в реальном времени между Топливом и Готово!
+        val barX = fuelX + slSz + 22f; val barW = outX - barX - 22f; val barH = 26f; val barY = slotsY + (slSz - barH) * 0.5f
+        SpriteArt.barFramePatch.draw(spriteBatch, barX, barY, barW, barH)
+        if (cookFrac > 0.01f) {
+            spriteBatch.setColor(0.28f, 0.94f, 0.50f, 1f)
+            spriteBatch.draw(SpriteArt.whitePx, barX + 4f, barY + 4f, (barW - 8f) * cookFrac, barH - 8f)
+            spriteBatch.color = Color.WHITE
+        }
+        val pctTxt = "Плавка: ${f.cook.toInt()}%"
+        glyphLayout.setText(fontSmall, pctTxt)
+        fontSmall.draw(spriteBatch, pctTxt, barX + (barW - glyphLayout.width) * 0.5f, barY + barH + 22f)
         spriteBatch.end()
 
-        drawButton(px + pw - 210f, stY + 12f, 178f, 42f, "Авто-загрузка", green = true, centered = true) {
+        // Просторная кнопка «Авто-загрузка» справа (текст никогда не обрезается!)
+        val autoW = max(210f, pw * 0.23f)
+        val autoX = px + pw - autoW - 26f
+        drawButton(autoX, slotsY + (slSz - 48f) * 0.5f, autoW, 48f, "Авто-загрузка", green = true, centered = true) {
             for (i in 0 until PlayerState.INV_SIZE) {
                 val s = player.slots[i] ?: continue
                 if (BlockRegistry.smeltMap.containsKey(s.id) && (f.input == null || f.input!!.id == s.id)) {
@@ -3070,14 +3172,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             SoundFx.play("pickup", 0.5f)
         }
 
-        // Нижняя часть: быстрая сетка рюкзака (3x9 = 27 слотов, перетаскивай руду/мясо/уголь прямо в печь!)
-        val bagH = stY - (py + 22f)
-        val cell = min((pw - 40f) / 9f, bagH / 3f)
+        // Нижняя часть: 27-слотовая сетка рюкзака (переключается 1/2 для всех 54 слотов!)
+        val bagH = stY - (py + 20f)
+        val cell = min((pw - 36f) / 9f, bagH / 3f)
         val gx0 = px + (pw - cell * 9f) * 0.5f
+        val bagOff = furnaceBagPage * 27
         for (i in 0 until 27) {
+            val invIdx = bagOff + i
             val sx = gx0 + (i % 9) * cell
-            val sy = stY - 10f - (i / 9 + 1) * cell
-            drawInteractiveSlot("inv", i, sx + 2f, sy + 2f, cell - 4f, player.slots[i])
+            val sy = stY - 8f - (i / 9 + 1) * cell
+            drawInteractiveSlot("inv", invIdx, sx + 2f, sy + 2f, cell - 4f, player.slots[invIdx], selected = invIdx == player.selectedSlot)
         }
     }
 

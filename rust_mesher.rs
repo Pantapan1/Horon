@@ -258,14 +258,29 @@ pub fn build_iso_frame(
                     1.0
                 };
 
+                // Ambient Occlusion + Elevation Shading -> makes stairs, hills & mine steps immediately clear!
+                let mut ao = 1.0f32;
+                if !is_cut_cap && !fogged && !def.is_liquid {
+                    let wall_bl = get_fast(gx - 1, gy, gz + 1);
+                    let wall_br = get_fast(gx, gy - 1, gz + 1);
+                    let wall_bk = get_fast(gx - 1, gy - 1, gz + 1);
+                    if wall_bl > 0 && lut[wall_bl as usize].solid { ao *= 0.80; }
+                    if wall_br > 0 && lut[wall_br as usize].solid { ao *= 0.80; }
+                    if ao > 0.95 && wall_bk > 0 && lut[wall_bk as usize].solid { ao *= 0.88; }
+                    // Subtle elevation contrast relative to player height (steps UP stand out brighter!)
+                    let dz_rel = (gz - (p_z - 1)).clamp(-3, 3) as f32;
+                    let elev_mult = (1.0 + dz_rel * 0.045).clamp(0.84, 1.14);
+                    ao = (ao * elev_mult).clamp(0.62, 1.14);
+                }
+
                 let top_col = if is_cut_cap || fogged {
                     cut_void_bits
                 } else if def.is_foliage {
-                    pack_color(grass_r, grass_g, grass_b, alpha)
+                    pack_color(grass_r * ao, grass_g * ao, grass_b * ao, alpha)
                 } else if def.is_liquid {
                     pack_color(liq_wave, liq_wave, 1.0, alpha)
                 } else {
-                    pack_color(1.0, 1.0, 1.0, alpha)
+                    pack_color(ao, ao, ao, alpha)
                 };
 
                 let left_col = if fogged { cut_void_bits } else if def.is_foliage && b_id == 6 {
@@ -314,6 +329,33 @@ pub fn build_iso_frame(
                             sx - TW, sy_top, sx, sy_top + TH, sx + TW, sy_top, sx, sy_top - TH,
                             top_col, u0, v0, u1, v1,
                         );
+                        // Crisp 3px step-edge bevel highlight on climbable +1 ledges (shows where stairs/slopes go UP!)
+                        if !fogged && def.solid && !def.is_foliage && up_id == 0 {
+                            let rim_bits = pack_color(1.0, 0.98, 0.88, 0.42 * alpha);
+                            let rim = 3.2f32;
+                            // Front-left drop edge (towards gy + 1): highlight if neighbor is 1 block lower (walkable step!)
+                            if left_id == 0 {
+                                let below_l = get_fast(gx, gy + 1, gz - 1);
+                                if below_l > 0 && lut[below_l as usize].solid {
+                                    push_quad(
+                                        out_verts, &mut vert_cur,
+                                        sx - TW, sy_top, sx - TW, sy_top + rim, sx, sy_top - TH + rim, sx, sy_top - TH,
+                                        rim_bits, wu0, wv0, wu1, wv1,
+                                    );
+                                }
+                            }
+                            // Front-right drop edge (towards gx + 1): highlight if neighbor is 1 block lower!
+                            if right_id == 0 {
+                                let below_r = get_fast(gx + 1, gy, gz - 1);
+                                if below_r > 0 && lut[below_r as usize].solid {
+                                    push_quad(
+                                        out_verts, &mut vert_cur,
+                                        sx, sy_top - TH, sx, sy_top - TH + rim, sx + TW, sy_top + rim, sx + TW, sy_top,
+                                        rim_bits, wu0, wv0, wu1, wv1,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
 

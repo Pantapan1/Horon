@@ -6,22 +6,31 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
+import android.provider.Settings
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.3.0"
-    const val CURRENT_TAG = "v6.3-rust-latest"
+    const val CURRENT_VERSION = "6.4.0"
+    const val CURRENT_TAG = "v6.4-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
+    const val APK_PROVIDER_URI = "content://com.voxelhorizon.nativegame.apkprovider/voxelhorizon_update.apk"
     const val CHANNEL_ID = "voxelhorizon_alerts"
 
     @Volatile var appContext: Context? = null
@@ -31,7 +40,10 @@ object PlatformBridge {
     @Volatile var updateTag = ""
     @Volatile var updateTitle = ""
     @Volatile var updateUrl = REPO_RELEASES_URL
+    @Volatile var updateApkUrl = ""
     @Volatile var updateStatusText = "Проверка обновлений..."
+    @Volatile var updateDownloading = false
+    @Volatile var updateProgress = 0
 
     fun init(ctx: Context, publicMirrorDir: File?) {
         appContext = ctx.applicationContext
@@ -119,8 +131,30 @@ object PlatformBridge {
         return sb.toString()
     }
 
+    private fun extractApkDownloadUrl(json: String): String {
+        var searchFrom = 0
+        while (true) {
+            val idx = json.indexOf("\"browser_download_url\"", searchFrom)
+            if (idx < 0) return ""
+            val colon = json.indexOf(':', idx + 22)
+            if (colon < 0) return ""
+            val q1 = json.indexOf('"', colon + 1)
+            if (q1 < 0) return ""
+            val sb = StringBuilder()
+            var i = q1 + 1
+            while (i < json.length) {
+                val ch = json[i]
+                if (ch == '\\' && i + 1 < json.length) { sb.append(json[i + 1]); i += 2; continue }
+                if (ch == '"') break
+                sb.append(ch); i++
+            }
+            val url = sb.toString()
+            if (url.endsWith(".apk", ignoreCase = true)) return url
+            searchFrom = i + 1
+        }
+    }
+
     private fun parseVersionTuple(tag: String): Int {
-        // Parses e.g. "v6.3-rust-latest" -> 60300, "v6.2.1" -> 60201
         val nums = Regex("\\d+").findAll(tag).map { it.value.toIntOrNull() ?: 0 }.toList()
         val maj = nums.getOrElse(0) { 0 }
         val min = nums.getOrElse(1) { 0 }
@@ -129,6 +163,7 @@ object PlatformBridge {
     }
 
     fun checkGitHubUpdate() {
+        if (updateDownloading) return
         updateStatusText = "Проверка GitHub..."
         thread(isDaemon = true) {
             try {
@@ -143,24 +178,26 @@ object PlatformBridge {
                     val body = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
                     val tag = extractJsonString(body, "tag_name")
                     val name = extractJsonString(body, "name")
-                    val htmlUrl = REPO_RELEASES_URL
+                    val apkDirect = extractApkDownloadUrl(body)
                     val remoteVer = parseVersionTuple(tag)
                     val localVer = parseVersionTuple(CURRENT_VERSION)
                     if (tag.isNotBlank() && (remoteVer > localVer || (remoteVer == localVer && tag != CURRENT_TAG && tag.contains("v")))) {
                         updateAvailable = true
                         updateTag = tag
                         updateTitle = name.ifBlank { "Новая версия $tag" }
-                        updateUrl = htmlUrl
+                        updateUrl = REPO_RELEASES_URL
+                        updateApkUrl = apkDirect
                         updateStatusText = "Доступно обновление: $tag!"
                         showNotification(
                             7002,
                             "Вышла новая версия VoxelHorizon ($tag)!",
-                            "Нажмите, чтобы скачать обновление из GitHub Releases.",
-                            htmlUrl
+                            "Откройте игру, чтобы скачать и установить обновление прямо внутри приложения.",
+                            null
                         )
                     } else {
                         updateAvailable = false
-                        updateStatusText = "Установлена актуальная версия ($CURRENT_VERSION)"
+                        updateApkUrl = apkDirect
+                        updateStatusText = "Версия $CURRENT_VERSION (актуальная)"
                     }
                 } else {
                     updateStatusText = "Версия $CURRENT_VERSION (GitHub: $code)"
@@ -171,6 +208,149 @@ object PlatformBridge {
             }
         }
     }
+
+    // Скачивание APK прямо в игре с прогрессом и автоматическим запуском установщика Android!
+    fun downloadAndInstallUpdate(onStatus: (String) -> Unit) {
+        val ctx = appContext ?: return
+        if (updateDownloading) return
+        val dlUrl = updateApkUrl
+        if (dlUrl.isBlank()) {
+            openBrowserUrl(REPO_RELEASES_URL)
+            onStatus("Открыта страница релизов GitHub")
+            return
+        }
+
+        // Проверяем право установки неизвестных приложений на Android 8+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ctx.packageManager.canRequestPackageInstalls()) {
+            onStatus("Разрешите установку обновлений для VoxelHorizon и нажмите снова!")
+            try {
+                val permIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                ctx.startActivity(permIntent)
+            } catch (_: Exception) {
+                openBrowserUrl(REPO_RELEASES_URL)
+            }
+            return
+        }
+
+        updateDownloading = true
+        updateProgress = 0
+        updateStatusText = "Загрузка обновления: 0%"
+        onStatus("Начата загрузка $updateTag прямо в игре...")
+
+        thread(isDaemon = true) {
+            try {
+                var curUrl = dlUrl
+                var conn: HttpURLConnection? = null
+                for (redir in 0 until 6) {
+                    val c = (URL(curUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 10000
+                        readTimeout = 20000
+                        instanceFollowRedirects = false
+                        setRequestProperty("User-Agent", "VoxelHorizon-Android-$CURRENT_VERSION")
+                    }
+                    val status = c.responseCode
+                    if (status in intArrayOf(301, 302, 303, 307, 308)) {
+                        val nextLoc = c.getHeaderField("Location")
+                        c.disconnect()
+                        if (nextLoc.isNullOrBlank()) break
+                        curUrl = nextLoc
+                    } else {
+                        conn = c
+                        break
+                    }
+                }
+                val finalConn = conn ?: throw RuntimeException("Ошибка редиректа")
+                if (finalConn.responseCode != 200) throw RuntimeException("HTTP ${finalConn.responseCode}")
+
+                val totalBytes = finalConn.contentLengthLong
+                val outFile = File(ctx.cacheDir, "voxelhorizon_update.apk")
+                val tmpFile = File(ctx.cacheDir, "voxelhorizon_update.apk.part")
+                if (tmpFile.exists()) tmpFile.delete()
+
+                var downloaded = 0L
+                val buf = ByteArray(16384)
+                finalConn.inputStream.use { inp ->
+                    FileOutputStream(tmpFile).use { out ->
+                        while (true) {
+                            val r = inp.read(buf)
+                            if (r <= 0) break
+                            out.write(buf, 0, r)
+                            downloaded += r
+                            if (totalBytes > 0L) {
+                                val pct = ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                                updateProgress = pct
+                                updateStatusText = "Загрузка $updateTag: $pct%"
+                            } else {
+                                updateStatusText = "Загрузка: ${downloaded / 1024} КБ"
+                            }
+                        }
+                    }
+                }
+                finalConn.disconnect()
+
+                if (outFile.exists()) outFile.delete()
+                tmpFile.renameTo(outFile)
+
+                updateDownloading = false
+                updateProgress = 100
+                updateStatusText = "Загружено! Открываем установщик..."
+                onStatus("Обновление загружено! Подтвердите установку.")
+
+                val installUri = Uri.parse(APK_PROVIDER_URI)
+                val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(installUri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ctx.startActivity(installIntent)
+            } catch (e: Exception) {
+                updateDownloading = false
+                updateStatusText = "Ошибка загрузки: ${e.message ?: "сеть"}"
+                onStatus("Ошибка загрузки — нажмите для перехода на GitHub")
+            }
+        }
+    }
+}
+
+// Безопасный встроенный ContentProvider для установки скачанного APK без зависимостей AndroidX!
+class ApkFileProvider : ContentProvider() {
+    override fun onCreate(): Boolean = true
+
+    private fun apkFile(): File? = context?.let { File(it.cacheDir, "voxelhorizon_update.apk") }
+
+    override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        val f = apkFile() ?: throw java.io.FileNotFoundException("No context")
+        if (!f.exists()) throw java.io.FileNotFoundException("APK not downloaded")
+        return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    override fun getType(uri: Uri): String = "application/vnd.android.package-archive"
+
+    override fun query(
+        uri: Uri,
+        projection: Array<out String>?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+        sortOrder: String?
+    ): Cursor {
+        val f = apkFile()
+        val cols = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+        val cursor = MatrixCursor(cols)
+        val row = Array<Any?>(cols.size) { i ->
+            when (cols[i]) {
+                OpenableColumns.DISPLAY_NAME -> "VoxelHorizon-Update.apk"
+                OpenableColumns.SIZE -> f?.length() ?: 0L
+                else -> null
+            }
+        }
+        cursor.addRow(row)
+        return cursor
+    }
+
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 }
 
 class ReminderReceiver : BroadcastReceiver() {
