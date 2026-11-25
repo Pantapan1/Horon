@@ -4,6 +4,7 @@ import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.graphics.Color
 import com.badlogic.gdx.graphics.Pixmap
 import com.badlogic.gdx.graphics.Texture
+import com.badlogic.gdx.graphics.g2d.TextureRegion
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -56,6 +57,9 @@ object BlockRegistry {
 
     lateinit var atlasPixmap: Pixmap
     lateinit var atlasTexture: Texture
+    private var itemIconPixmap: Pixmap? = null
+    private var itemIconTexture: Texture? = null
+    val iconRegions = ConcurrentHashMap<Int, TextureRegion>()
     private var nextModTile = 48
 
     fun init() {
@@ -67,7 +71,7 @@ object BlockRegistry {
 
         // --- БЛОКИ (0..40) ---
         reg(ItemDef(0, "Воздух", solid = false, transparent = true))
-        reg(ItemDef(1, "Дёрн", solid = true, isFoliage = true, hardness = 0.6f, dropId = 2, toolType = "shovel", faces = intArrayOf(0, 1, 2), colorHex = 0x56B846))
+        reg(ItemDef(1, "Дёрн", solid = true, isFoliage = false, hardness = 0.6f, dropId = 2, toolType = "shovel", faces = intArrayOf(0, 1, 2), colorHex = 0x56B846))
         reg(ItemDef(2, "Земля", solid = true, hardness = 0.5f, dropId = 2, toolType = "shovel", faces = intArrayOf(2, 2, 2), colorHex = 0x865C3A))
         reg(ItemDef(3, "Камень", solid = true, hardness = 1.6f, dropId = 4, toolType = "pick", faces = intArrayOf(3, 3, 3), colorHex = 0x808690))
         reg(ItemDef(4, "Булыжник", solid = true, hardness = 1.8f, dropId = 4, toolType = "pick", faces = intArrayOf(4, 4, 4), colorHex = 0x747A84))
@@ -174,6 +178,7 @@ object BlockRegistry {
         smeltMap[4] = 3    // Булыжник -> Камень
 
         buildAtlas()
+        buildItemIcons()
     }
 
     private fun buildAtlas() {
@@ -302,10 +307,164 @@ object BlockRegistry {
 
         val hex = ((r * 255).toInt() shl 16) or ((g * 255).toInt() shl 8) or (b * 255).toInt()
         items[id] = ItemDef(id, name, solid = true, hardness = 1.2f, dropId = id, faces = intArrayOf(tid, tid, tid), colorHex = hex)
+        iconRegions[id] = TextureRegion(atlasTexture, tx, ty, TILE_PX, TILE_PX)
         return tid
     }
 
+
+    fun getIconRegion(id: Int): TextureRegion? = iconRegions[id]
+
+    private fun buildItemIcons() {
+        iconRegions.clear()
+        // 1. Для всех блоков берём реальный 64x64 тайл прямо из атласа блоков!
+        for ((id, def) in items) {
+            if (!def.isItem && def.faces != null && id > 0) {
+                val tileIdx = def.faces[1]
+                val tx = (tileIdx % ATLAS_COLS) * TILE_PX
+                val ty = (tileIdx / ATLAS_COLS) * TILE_PX
+                iconRegions[id] = TextureRegion(atlasTexture, tx, ty, TILE_PX, TILE_PX)
+            }
+        }
+
+        // 2. Для всех предметов (101..132) и 3D-пропсов (35, 37, 38) рисуем чёткие 32x32 RPG-иконки!
+        val itemIds = items.keys.filter { it >= 100 || it == 37 || it == 38 }.sorted()
+        val cols = 8
+        val rows = maxOf(4, (itemIds.size + cols - 1) / cols)
+        val sz = 32
+        val pm = Pixmap(cols * sz, rows * sz, Pixmap.Format.RGBA8888)
+        pm.blending = Pixmap.Blending.SourceOver
+        pm.setColor(0f, 0f, 0f, 0f)
+        pm.fill()
+
+        fun px(ox: Int, oy: Int, x: Int, y: Int, w: Int, h: Int, hex: Int, a: Float = 1f) {
+            val r = ((hex shr 16) and 0xFF) / 255f
+            val g = ((hex shr 8) and 0xFF) / 255f
+            val b = (hex and 0xFF) / 255f
+            pm.setColor(r, g, b, a)
+            pm.fillRectangle(ox + x * 2, oy + y * 2, w * 2, h * 2)
+        }
+
+        itemIds.forEachIndexed { index, id ->
+            val def = items[id] ?: return@forEachIndexed
+            val ox = (index % cols) * sz
+            val oy = (index / cols) * sz
+            val c = def.colorHex
+            val wood = 0x8A5A2E
+            val dark = 0x161220
+
+            when {
+                id == 37 -> { // Факел
+                    px(ox, oy, 7, 6, 2, 9, wood)
+                    px(ox, oy, 6, 4, 4, 3, 0xFF7718)
+                    px(ox, oy, 7, 2, 2, 3, 0xFFF488)
+                }
+                id == 38 -> { // Кровать
+                    px(ox, oy, 2, 7, 12, 5, 0x8F5B30)
+                    px(ox, oy, 2, 11, 2, 3, 0x6E4220)
+                    px(ox, oy, 12, 11, 2, 3, 0x6E4220)
+                    px(ox, oy, 3, 5, 3, 3, 0xFFFFFF)
+                    px(ox, oy, 6, 5, 8, 4, 0xD62839)
+                }
+                def.toolType == "pick" -> { // Кирка
+                    px(ox, oy, 3, 2, 10, 2, c)
+                    px(ox, oy, 2, 3, 2, 3, c)
+                    px(ox, oy, 12, 3, 2, 3, c)
+                    px(ox, oy, 7, 4, 2, 11, wood)
+                }
+                def.toolType == "axe" -> { // Топор
+                    px(ox, oy, 4, 2, 7, 5, c)
+                    px(ox, oy, 3, 4, 3, 4, c)
+                    px(ox, oy, 7, 5, 2, 10, wood)
+                }
+                def.weaponStyle == "katana" -> { // Катана
+                    for (i in 0 until 9) {
+                        px(ox, oy, 13 - i, 2 + i, 2, 2, c)
+                        px(ox, oy, 13 - i, 2 + i, 1, 1, 0xFFFFFF)
+                    }
+                    px(ox, oy, 4, 9, 4, 2, 0xFFD24C)
+                    px(ox, oy, 2, 11, 3, 3, 0x3A2438)
+                }
+                def.weaponStyle == "hammer" -> { // Боевой Молот
+                    px(ox, oy, 3, 2, 10, 5, c)
+                    px(ox, oy, 4, 3, 8, 2, 0xFFFFFF, 0.35f)
+                    px(ox, oy, 7, 7, 2, 8, wood)
+                }
+                def.weaponStyle == "grapple" -> { // Крюк-кошка
+                    px(ox, oy, 7, 2, 2, 12, 0x94A3B8)
+                    px(ox, oy, 3, 3, 10, 2, c)
+                    px(ox, oy, 3, 3, 2, 4, c)
+                    px(ox, oy, 11, 3, 2, 4, c)
+                    px(ox, oy, 6, 12, 4, 3, 0xFFD24C)
+                }
+                def.weaponStyle == "bow" -> { // Лук
+                    px(ox, oy, 4, 2, 1, 12, 0xE8E8E8)
+                    px(ox, oy, 5, 2, 2, 2, wood)
+                    px(ox, oy, 7, 3, 2, 2, wood)
+                    px(ox, oy, 9, 5, 2, 6, wood)
+                    px(ox, oy, 7, 11, 2, 2, wood)
+                    px(ox, oy, 5, 12, 2, 2, wood)
+                    px(ox, oy, 3, 7, 10, 2, 0xFFD24C)
+                }
+                id == 132 -> { // Щит
+                    px(ox, oy, 3, 2, 10, 11, 0x8A5A2E)
+                    px(ox, oy, 4, 3, 8, 9, c)
+                    px(ox, oy, 7, 4, 2, 7, 0xFFE888)
+                    px(ox, oy, 5, 7, 6, 2, 0xFFE888)
+                }
+                def.armorSlot >= 0 -> { // Броня
+                    when (def.armorSlot) {
+                        0 -> { px(ox, oy, 3, 4, 10, 8, c); px(ox, oy, 5, 9, 6, 3, dark) }
+                        1 -> { px(ox, oy, 3, 3, 10, 10, c); px(ox, oy, 6, 3, 4, 3, dark) }
+                        2 -> { px(ox, oy, 4, 3, 8, 4, c); px(ox, oy, 4, 7, 3, 7, c); px(ox, oy, 9, 7, 3, 7, c) }
+                        else -> { px(ox, oy, 3, 7, 4, 6, c); px(ox, oy, 9, 7, 4, 6, c) }
+                    }
+                }
+                def.healFood > 0 -> { // Еда (Яблоко, Мясо, Стейк, Звезда)
+                    px(ox, oy, 4, 5, 8, 8, c)
+                    px(ox, oy, 3, 6, 10, 6, c)
+                    px(ox, oy, 5, 6, 2, 2, 0xFFFFFF, 0.55f)
+                    if (id == 113) px(ox, oy, 8, 3, 3, 2, 0x4ADE80)
+                }
+                id == 119 || id == 120 -> { // Ведро воды/лавы
+                    px(ox, oy, 3, 4, 10, 10, 0xBCC6D4)
+                    px(ox, oy, 4, 5, 8, 4, c)
+                }
+                id == 116 -> { // Огниво
+                    px(ox, oy, 3, 8, 5, 6, 0x8A94A4)
+                    px(ox, oy, 8, 3, 4, 7, 0xFF9922)
+                    px(ox, oy, 9, 4, 2, 4, 0xFFF275)
+                }
+                id == 105 || id == 124 -> { // Палка / Стрела
+                    for (i in 0 until 10) px(ox, oy, 3 + i, 12 - i, 2, 2, c)
+                    if (id == 124) px(ox, oy, 11, 2, 3, 3, 0xFFFFFF)
+                }
+                id == 102 || id == 103 -> { // Слитки
+                    px(ox, oy, 3, 6, 10, 5, c)
+                    px(ox, oy, 4, 6, 8, 2, 0xFFFFFF, 0.45f)
+                }
+                else -> { // Кристаллы / Алмаз / Изумруд / Уголь / Кварц
+                    px(ox, oy, 5, 3, 6, 10, c)
+                    px(ox, oy, 3, 5, 10, 6, c)
+                    px(ox, oy, 5, 4, 3, 3, 0xFFFFFF, 0.45f)
+                }
+            }
+        }
+
+        val tex = Texture(pm)
+        tex.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest)
+        itemIconPixmap = pm
+        itemIconTexture = tex
+
+        itemIds.forEachIndexed { index, id ->
+            val ox = (index % cols) * sz
+            val oy = (index / cols) * sz
+            iconRegions[id] = TextureRegion(tex, ox, oy, sz, sz)
+        }
+    }
+
     fun dispose() {
+        itemIconTexture?.dispose()
+        itemIconPixmap?.dispose()
         if (::atlasTexture.isInitialized) atlasTexture.dispose()
         if (::atlasPixmap.isInitialized) atlasPixmap.dispose()
     }

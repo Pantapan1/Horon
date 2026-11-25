@@ -580,7 +580,7 @@ class VoxelWorld(var seed: Int, var dimension: String = "overworld") {
 
                     val wx = baseX + lx; val wz = baseZ + lz
                     val isFluid = info.liquid || info.isPortal
-                    val flag = when {
+                    val baseFlag = when {
                         info.isLava || info.isPortal || info.lightLevel >= 14 -> 0.75f
                         info.liquid -> 0.50f
                         info.isFoliage -> 0.25f
@@ -633,7 +633,8 @@ class VoxelWorld(var seed: Int, var dimension: String = "overworld") {
                             val vy = if (info.liquid && v[1] > 0.5f) 0.88f else v[1]
                             vBuf.add(wx + v[0], y + vy, wz + v[2])
                             vBuf.add(uvs[vi][0], uvs[vi][1])
-                            vBuf.add(skyL * ao, blkL * ao, shades[fi], flag)
+                            val faceFlag = if (bId == 1 && fi == 0) 0.12f else baseFlag
+                            vBuf.add(skyL * ao, blkL * ao, shades[fi], faceFlag)
                         }
                         iBuf.add(vStart.toShort(), (vStart + 1).toShort(), (vStart + 2).toShort())
                         iBuf.add(vStart.toShort(), (vStart + 2).toShort(), (vStart + 3).toShort())
