@@ -43,8 +43,9 @@ jobs:
           mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/mipmap-hdpi app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi
 
-          # Rust native engine files
-          cp -f Cargo.toml rust_core/Cargo.toml
+          # Move Cargo.toml so Cargo doesn't see a duplicate manifest in the parent directory
+          mv -f Cargo.toml rust_core/Cargo.toml
+          printf "\n[workspace]\n" >> rust_core/Cargo.toml
           cp -f rust_lib.rs rust_core/src/lib.rs
           cp -f rust_noise.rs rust_core/src/noise.rs
           cp -f rust_world.rs rust_core/src/world.rs
