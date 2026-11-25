@@ -1,4 +1,4 @@
-name: Build VoxelHorizon Rust Engine v6.5 APK (Mega Update)
+name: Build VoxelHorizon Rust Engine v6.6 APK (Mega Update)
 
 on:
   push:
@@ -54,13 +54,13 @@ jobs:
           [ -f "voxelhorizon.jks" ] && cp -f voxelhorizon.jks app/voxelhorizon.jks
           cp -f AndroidManifest.xml app/src/main/AndroidManifest.xml
 
-          # All Kotlin sources (explicit list v6.5)
+          # All Kotlin sources (explicit list v6.6)
           for kt in AndroidLauncher.kt PlatformBridge.kt ProfileManager.kt SoundFx.kt RedstoneSystem.kt RustEngine.kt BlockRegistry.kt SpriteArt.kt WorldIso.kt EntitiesIso.kt LuaModEngine.kt NetMultiplayer.kt VoxelHorizonGame.kt; do
             [ -f "$kt" ] && cp -f "$kt" app/src/main/java/com/voxelhorizon/nativegame/
           done
 
           # All PNG/JPG textures, Pixel UI, Pixel Font, SFX WAVs, and stereo OST
-          for asset in anime_tiles.png anime_tiles_2.png anime_tiles_3.png anime_tiles_4.png anime_tiles_5.png anime_items.png anime_items_2.png anime_items_3.png anime_items_4.png anime_items_5.png sprites_heroes.png sprites_mobs.png sprites_props.png ui_pixel.png pixel_font.png pixel_font.fnt cover_anime.jpg font.ttf ost_*.wav sfx_*.wav; do
+          for asset in anime_tiles.png anime_tiles_2.png anime_tiles_3.png anime_tiles_4.png anime_tiles_5.png anime_items.png anime_items_2.png anime_items_3.png anime_items_4.png anime_items_5.png sprites_heroes.png sprites_mobs.png sprites_props.png ui_pixel.png block_cracks.png menu_panorama.png logo_banner.png pixel_font.png pixel_font.fnt cover_anime.jpg font.ttf ost_*.wav sfx_*.wav; do
             [ -f "$asset" ] && cp -f "$asset" app/src/main/assets/
           done
 
@@ -85,15 +85,15 @@ jobs:
       - name: Compile Android APK with Rust Engine
         run: |
           gradle assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk VoxelHorizon-Rust-v6.5.apk
-          ls -lh VoxelHorizon-Rust-v6.5.apk
+          cp app/build/outputs/apk/debug/app-debug.apk VoxelHorizon-Rust-v6.6.apk
+          ls -lh VoxelHorizon-Rust-v6.6.apk
 
       - name: Publish direct APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v6.5-rust-latest
-          name: VoxelHorizon Rust Engine v6.5 APK (Mega Update)
-          files: VoxelHorizon-Rust-v6.5.apk
+          tag_name: v6.6-rust-latest
+          name: VoxelHorizon Rust Engine v6.6 APK (Mega Update)
+          files: VoxelHorizon-Rust-v6.6.apk
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
