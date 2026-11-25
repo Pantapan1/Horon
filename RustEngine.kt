@@ -20,7 +20,7 @@ object RustEngine {
     @JvmStatic external fun nativeGetGroundZ(x: Int, y: Int, curZ: Float): Float
     @JvmStatic external fun nativeHasRoofAbove(x: Int, y: Int, pz: Int): Boolean
     @JvmStatic external fun nativeApplySeasonalStep(seasonIdx: Int, seasonProgress: Float, px: Int, py: Int, rngSeed: Int)
-    @JvmStatic external fun nativePickIsoBlock(wxS: Float, wyS: Float, pz: Int, sliceZ: Int, outPick: ByteBuffer)
+    @JvmStatic external fun nativePickIsoBlock(wxS: Float, wyS: Float, pGx: Int, pGy: Int, pz: Int, sliceZ: Int, isCutaway: Boolean, outPick: ByteBuffer)
 
     @JvmStatic external fun nativeBuildIsoFrame(
         elapsed: Float,

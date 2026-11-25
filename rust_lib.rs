@@ -182,11 +182,14 @@ pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativePickIso
     _class: JClass<'local>,
     wx_s: jfloat,
     wy_s: jfloat,
+    p_gx: jint,
+    p_gy: jint,
     pz: jint,
     slice_z: jint,
+    is_cutaway: jboolean,
     out_pick: JByteBuffer<'local>,
 ) {
-    let (gx, gy, gz, id) = with_world(|w| w.pick_iso_block(wx_s, wy_s, pz, slice_z));
+    let (gx, gy, gz, id) = with_world(|w| w.pick_iso_block(wx_s, wy_s, p_gx, p_gy, pz, slice_z, is_cutaway != 0));
     unsafe {
         if let Some(out) = buf_as_i32_mut(&env, &out_pick) {
             if out.len() >= 4 {

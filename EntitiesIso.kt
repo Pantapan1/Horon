@@ -31,6 +31,7 @@ data class DashGhost(val x: Float, val y: Float, val z: Float, val facingRight: 
 data class SlashArc(val x: Float, val y: Float, val z: Float, val angleDeg: Float, val colorHex: Int, var life: Float = 0.22f)
 
 class PlayerState {
+    companion object { const val INV_SIZE = 54 }
     var x = 0.5f; var y = 0.5f; var z = 142.0f
     var vx = 0f; var vy = 0f; var vz = 0f
     var facingRight = true
@@ -44,6 +45,7 @@ class PlayerState {
     var speedBuffTimer = 0f
     var parryTimer = 0f
     var dashCooldown = 0f
+    var foodCooldown = 0f
     var weaponUpgradeLvl = 0
     var toolUpgradeLvl = 0
 
@@ -64,7 +66,7 @@ class PlayerState {
     var skinId = "fox_officer"
     var spawnX = 0.5f; var spawnY = 0.5f; var spawnZ = 142.0f; var spawnDim = "overworld"
 
-    val slots = arrayOfNulls<SlotItem>(36)
+    val slots = arrayOfNulls<SlotItem>(INV_SIZE)
     var offhand: SlotItem? = SlotItem(37, 16)
     val armor = IntArray(4) { 0 }
 
@@ -88,7 +90,7 @@ class PlayerState {
     fun addItem(id: Int, countIn: Int = 1): Boolean {
         if (id <= 0 || countIn <= 0) return false
         var rem = countIn
-        for (i in 0 until 36) {
+        for (i in 0 until INV_SIZE) {
             val s = slots[i]
             if (s != null && s.id == id && s.count < 64) {
                 val add = minOf(64 - s.count, rem)
@@ -96,7 +98,7 @@ class PlayerState {
                 if (rem <= 0) return true
             }
         }
-        for (i in 0 until 36) {
+        for (i in 0 until INV_SIZE) {
             if (slots[i] == null) {
                 val add = minOf(64, rem)
                 slots[i] = SlotItem(id, add); rem -= add
@@ -110,7 +112,7 @@ class PlayerState {
         if (creative) return true
         if (countItem(id) < countIn) return false
         var rem = countIn
-        for (i in 0 until 36) {
+        for (i in 0 until INV_SIZE) {
             val s = slots[i] ?: continue
             if (s.id != id) continue
             val sub = minOf(s.count, rem)
@@ -128,7 +130,7 @@ class PlayerState {
 
     fun autoSortBackpack() {
         val merged = linkedMapOf<Int, Int>()
-        for (i in 9 until 36) {
+        for (i in 9 until INV_SIZE) {
             val s = slots[i] ?: continue
             merged[s.id] = (merged[s.id] ?: 0) + s.count
             slots[i] = null
@@ -136,7 +138,7 @@ class PlayerState {
         var idx = 9
         for ((id, total) in merged.entries.sortedBy { it.key }) {
             var rem = total
-            while (rem > 0 && idx < 36) {
+            while (rem > 0 && idx < INV_SIZE) {
                 val take = minOf(64, rem)
                 slots[idx++] = SlotItem(id, take)
                 rem -= take
@@ -172,7 +174,12 @@ data class MobEntity(
     var tamed: Boolean = false,
     var stolenItemId: Int = 0,
     var barterCd: Float = 0f,
-    var breedCd: Float = 0f
+    var breedCd: Float = 0f,
+    var isDeepMob: Boolean = false,
+    var netTargetX: Float = x,
+    var netTargetY: Float = y,
+    var netTargetZ: Float = z,
+    var hasNetTarget: Boolean = false
 )
 
 data class DroppedItem(
@@ -263,7 +270,9 @@ class EntityAndWeatherManager {
             "enderman" -> "Эндермен"; "piglin" -> "Пиглин"; "blaze" -> "Ифрит"; "ghast" -> "Гаст"
             else -> type
         }
-        val m = MobEntity(nextId++, type, title, hostile, isBoss, x, y, z, hp = maxHp, maxHp = maxHp)
+        val deep = hostile && z < 56f
+        val finalHp = if (deep) (maxHp * 1.30f) else maxHp
+        val m = MobEntity(nextId++, type, title, hostile, isBoss, x, y, z, hp = finalHp, maxHp = finalHp, isDeepMob = deep)
         mobs.add(m)
         return m
     }
@@ -324,7 +333,10 @@ class EntityAndWeatherManager {
             keep.add(s.id)
             val ex = byId[s.id]
             if (ex != null) {
-                ex.x = s.x; ex.y = s.y; ex.z = s.z; ex.hp = s.hp; ex.maxHp = s.maxHp
+                val jump = hypot((s.x - ex.x).toDouble(), (s.y - ex.y).toDouble())
+                if (jump > 4.5) { ex.x = s.x; ex.y = s.y; ex.z = s.z }
+                ex.netTargetX = s.x; ex.netTargetY = s.y; ex.netTargetZ = s.z; ex.hasNetTarget = true
+                ex.hp = s.hp; ex.maxHp = s.maxHp
                 ex.facingRight = s.facingRight; ex.walkAnim = s.walkAnim; ex.attackAnim = s.attackAnim
                 ex.hurtFlash = s.hurtFlash; ex.freezeTimer = s.freezeTimer; ex.stunTimer = s.stunTimer
                 ex.hostile = s.hostile; ex.tamed = s.tamed
@@ -571,7 +583,19 @@ class EntityAndWeatherManager {
         }
         foxPet?.let { tickAlly(it, 1.1f, 0.5f) }
 
-        if (isNetClient) return
+        if (isNetClient) {
+            val k = min(1f, dt * 12f)
+            for (m in mobs) {
+                if (m.hasNetTarget) {
+                    val dx = m.netTargetX - m.x; val dy = m.netTargetY - m.y
+                    m.vx = dx * 6f; m.vy = dy * 6f
+                    m.x += dx * k; m.y += dy * k; m.z += (m.netTargetZ - m.z) * k
+                }
+                if (m.hurtFlash > 0f) m.hurtFlash = max(0f, m.hurtFlash - dt)
+                if (m.attackAnim > 0f) m.attackAnim = max(0f, m.attackAnim - dt * 4f)
+            }
+            return
+        }
 
         // Кровавая Луна (раз в 7 ночей — контролируемый набег на лагерь!)
         val bloodNow = world.dimension == "overworld" && dayCount >= 7 && (dayCount % 7 == 0) && dayFactor < 0.25f
@@ -759,7 +783,7 @@ class EntityAndWeatherManager {
                     }
                     if (!ranged && distP < 1.25f && m.atkCd <= 0f) {
                         m.atkCd = 1.05f; m.attackAnim = 1.0f
-                        val hitDmg = when (m.type) { "yeti", "crystal_golem", "mimic" -> 6f; "enderman" -> 5f; else -> 3f }
+                        val hitDmg = (when (m.type) { "yeti", "crystal_golem", "mimic" -> 6f; "enderman" -> 5f; else -> 3f }) * (if (m.isDeepMob) 1.25f else 1f)
                         onHurtPlayer(hitDmg, m)
                     }
                 }

@@ -218,6 +218,10 @@ object BlockRegistry {
         reg(ItemDef(154, "Золотая Рыбка", isItem = true, colorHex = 0xF6C62A, healFood = 10, healHp = 10))
         reg(ItemDef(155, "Уха (Рыбный суп)", isItem = true, colorHex = 0xF2A23A, healFood = 14, healHp = 10))
         reg(ItemDef(156, "Ягодный пирог", isItem = true, colorHex = 0xE23452, healFood = 12, healHp = 8))
+        reg(ItemDef(157, "Сырое мясо", isItem = true, colorHex = 0xD83842, healFood = 2, healHp = 1))
+        reg(ItemDef(158, "Мех / Шкура", isItem = true, colorHex = 0x9C6838))
+        reg(ItemDef(159, "Порох", isItem = true, colorHex = 0x565C68))
+        reg(ItemDef(160, "Паутина / Нить", isItem = true, colorHex = 0xE8EEF8))
 
         // --- РЕЦЕПТЫ: Карман (2x2), Верстак (3x3) и Костёр (Готовка и Отвары!) ---
         recipes += RecipeDef(7, 4, listOf(5 to 1), "1 Дуб -> 4 Доски", pocket2x2 = true)
@@ -239,14 +243,21 @@ object BlockRegistry {
         recipes += RecipeDef(51, 4, listOf(4 to 4), "4 Булыжника -> 4 Кам.кирпича")
         recipes += RecipeDef(52, 1, listOf(7 to 6, 140 to 1), "6 Досок + Медь -> Бочка")
         recipes += RecipeDef(64, 4, listOf(7 to 4, 105 to 2), "4 Доски + 2 Палки -> 4 Забора")
-        recipes += RecipeDef(38, 1, listOf(7 to 3, 2 to 2), "3 Доски + 2 Земли -> Кровать")
-        recipes += RecipeDef(148, 1, listOf(115 to 3, 7 to 2), "3 Мяса + 2 Доски -> Тёплая шуба (от холода)")
+        recipes += RecipeDef(38, 1, listOf(7 to 3, 158 to 2), "3 Доски + 2 Меха -> Кровать")
+        recipes += RecipeDef(148, 1, listOf(158 to 4, 7 to 2), "4 Меха + 2 Доски -> Тёплая шуба (от холода)")
+        recipes += RecipeDef(125, 1, listOf(158 to 3), "3 Меха -> Кожаный шлем")
+        recipes += RecipeDef(107, 1, listOf(4 to 3, 105 to 2), "3 Булыжника + 2 Палки -> Кам. кирка")
+        recipes += RecipeDef(111, 1, listOf(102 to 2, 105 to 1), "2 Железа + Палка -> Железный Меч")
+        recipes += RecipeDef(126, 1, listOf(102 to 6), "6 Железа -> Жел. нагрудник")
+        recipes += RecipeDef(127, 1, listOf(102 to 5), "5 Железа -> Жел. поножи")
+        recipes += RecipeDef(128, 1, listOf(104 to 4), "4 Алмаза -> Алм. ботинки")
+        recipes += RecipeDef(26, 1, listOf(159 to 4, 8 to 2), "4 Пороха + 2 Песка -> Динамит (TNT)")
         recipes += RecipeDef(108, 1, listOf(102 to 3, 105 to 2), "3 Железа + 2 Палки -> Жел. кирка")
         recipes += RecipeDef(109, 1, listOf(104 to 3, 105 to 2), "3 Алмаза + 2 Палки -> Алм. кирка")
         recipes += RecipeDef(112, 1, listOf(104 to 2, 105 to 1), "2 Алмаза + Палка -> Алм. Меч")
         recipes += RecipeDef(130, 1, listOf(102 to 5, 105 to 2), "5 Железа + 2 Палки -> Боевой Молот")
         recipes += RecipeDef(132, 1, listOf(7 to 6, 102 to 1), "6 Досок + Железо -> Щит (Парирование)")
-        recipes += RecipeDef(123, 1, listOf(105 to 3, 118 to 1), "3 Палки + Изумруд -> Лук")
+        recipes += RecipeDef(123, 1, listOf(105 to 3, 160 to 2), "3 Палки + 2 Нити -> Лук")
         recipes += RecipeDef(124, 8, listOf(105 to 1, 4 to 1), "Палка + Булыжник -> 8 Стрел")
         recipes += RecipeDef(34, 1, listOf(22 to 4, 116 to 1), "4 Обсидиана + Огниво -> Портал в Ад")
         recipes += RecipeDef(114, 2, listOf(143 to 3), "3 Пшеницы -> 2 Хлеба")
@@ -257,12 +268,13 @@ object BlockRegistry {
         recipes += RecipeDef(65, 2, listOf(7 to 2, 105 to 1), "2 Доски + Палка -> 2 Таблички")
         recipes += RecipeDef(116, 1, listOf(102 to 1, 101 to 1), "Железо + Уголь -> Огниво")
         recipes += RecipeDef(120, 1, listOf(102 to 3), "3 Железа -> Пустое ведро")
-        recipes += RecipeDef(150, 1, listOf(105 to 3, 147 to 1), "3 Палки + Слизь -> Удочка")
+        recipes += RecipeDef(150, 1, listOf(105 to 3, 160 to 2), "3 Палки + 2 Нити -> Удочка")
         recipes += RecipeDef(72, 2, listOf(102 to 4, 141 to 1), "4 Железа + Аметист -> 2 Шахтных Лифта")
         recipes += RecipeDef(73, 2, listOf(102 to 3), "3 Железа -> 2 Шипы-ловушки")
         recipes += RecipeDef(74, 1, listOf(123 to 1, 102 to 3, 7 to 4), "Лук + 3 Железа + 4 Доски -> Авто-арбалет")
 
         // Рецепты Костра (Готовка и Отвары!)
+        recipes += RecipeDef(115, 1, listOf(157 to 1), "1 Сырое мясо -> Жареный стейк", campfireBrew = true)
         recipes += RecipeDef(146, 2, listOf(145 to 2), "2 Гриба -> 2 Жареных гриба", campfireBrew = true)
         recipes += RecipeDef(136, 2, listOf(144 to 2, 113 to 1), "2 Ягоды + Яблоко -> 2 Согревающих чая", campfireBrew = true)
         recipes += RecipeDef(137, 1, listOf(145 to 2, 141 to 1), "2 Гриба + Аметист -> Отвар Шахтёра (видит руды)", campfireBrew = true)
@@ -273,7 +285,7 @@ object BlockRegistry {
         recipes += RecipeDef(156, 1, listOf(143 to 2, 144 to 3), "2 Пшеницы + 3 Ягоды -> Ягодный пирог", campfireBrew = true)
 
         smeltMap[12] = 102; smeltMap[13] = 103; smeltMap[48] = 140
-        smeltMap[8] = 15; smeltMap[145] = 146; smeltMap[4] = 3; smeltMap[47] = 16
+        smeltMap[8] = 15; smeltMap[145] = 146; smeltMap[4] = 3; smeltMap[47] = 16; smeltMap[157] = 115
 
         buildAtlas()
         buildItemIcons()
@@ -393,7 +405,7 @@ object BlockRegistry {
         if (f3.exists()) {
             val tex = Texture(f3).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest) }
             itemsTexture3 = tex
-            val cw = tex.width / 4; val ch = tex.height / 2
+            val cw = tex.width / 4; val ch = tex.height / 4
             fun c3(c: Int, r: Int) = TextureRegion(tex, c * cw, r * ch, cw, ch)
             iconRegions[150] = c3(0, 0) // Удочка
             iconRegions[151] = c3(1, 0) // Карась
@@ -402,6 +414,10 @@ object BlockRegistry {
             iconRegions[154] = c3(0, 1) // Золотая Рыбка
             iconRegions[155] = c3(1, 1) // Уха
             iconRegions[156] = c3(2, 1) // Ягодный пирог
+            iconRegions[157] = c3(0, 2) // Сырое мясо
+            iconRegions[158] = c3(1, 2) // Мех / Шкура
+            iconRegions[159] = c3(2, 2) // Порох
+            iconRegions[160] = c3(3, 2) // Паутина / Нить
         }
     }
 

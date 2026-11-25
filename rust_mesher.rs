@@ -182,8 +182,8 @@ pub fn build_iso_frame(
 
             let occludes_hero = !is_cutaway
                 && (gx + gy > p_gx + p_gy)
-                && (gx + gy <= p_gx + p_gy + 4)
-                && ((gx - gy) - (p_gx - p_gy)).abs() <= 2;
+                && (gx + gy <= p_gx + p_gy + 5)
+                && ((gx - gy) - (p_gx - p_gy)).abs() <= 3;
             let fogged = use_fog && !is_explored_fast(gx, gy);
 
             for gz in z_min..=z_max {

@@ -18,10 +18,10 @@ import java.net.URL
 import kotlin.concurrent.thread
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.2.0"
-    const val CURRENT_TAG = "v6.2-rust-latest"
+    const val CURRENT_VERSION = "6.3.0"
+    const val CURRENT_TAG = "v6.3-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
-    const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases/latest"
+    const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
     const val CHANNEL_ID = "voxelhorizon_alerts"
 
     @Volatile var appContext: Context? = null
@@ -143,7 +143,7 @@ object PlatformBridge {
                     val body = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
                     val tag = extractJsonString(body, "tag_name")
                     val name = extractJsonString(body, "name")
-                    val htmlUrl = extractJsonString(body, "html_url").ifBlank { REPO_RELEASES_URL }
+                    val htmlUrl = REPO_RELEASES_URL
                     val remoteVer = parseVersionTuple(tag)
                     val localVer = parseVersionTuple(CURRENT_VERSION)
                     if (tag.isNotBlank() && (remoteVer > localVer || (remoteVer == localVer && tag != CURRENT_TAG && tag.contains("v")))) {

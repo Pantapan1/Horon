@@ -13,6 +13,7 @@ import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.concurrent.thread
@@ -24,8 +25,10 @@ data class RemotePlayer(
     var nick: String,
     var skinId: String,
     var x: Float, var y: Float, var z: Float,
+    var targetX: Float = x, var targetY: Float = y, var targetZ: Float = z,
     var facingRight: Boolean = true,
     var walkAnim: Float = 0f,
+    var isMoving: Boolean = false,
     var attackAnim: Float = 0f,
     var isSleeping: Boolean = false,
     var heldId: Int = 0,
@@ -71,6 +74,9 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     private var mqttOut: DataOutputStream? = null
     private var mqttTopic = ""
     private val netSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-net-send").apply { isDaemon = true } }
+    private val posInFlight = AtomicBoolean(false)
+    private val mobsInFlight = AtomicBoolean(false)
+    private val dropsInFlight = AtomicBoolean(false)
 
     // =========================================================================
     // 1. ОНЛАЙН-МУЛЬТИПЛЕЕР ЧЕРЕЗ ИНТЕРНЕТ (КОД КОМНАТЫ — РАБОТАЕТ НА ЛЮБОМ РАССТОЯНИИ!)
@@ -119,6 +125,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 try {
                     val s = Socket()
                     s.connect(InetSocketAddress(host, port), 4500)
+                    s.tcpNoDelay = true
                     s.soTimeout = 0
                     sock = s
                     connectedBroker = host
@@ -294,7 +301,10 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                     val ackLen = readMqttVarInt(inp)
                     val ackB = ByteArray(ackLen); inp.readFully(ackB)
                     if ((ackType and 0xF0) != 0x20) throw RuntimeException("Presence CONNACK fail")
-                    sendMqttSubscribe(out, 2, "vh62/presence/#")
+                    var subId = 10
+                    for (fr in profiles.active.friends) {
+                        sendMqttSubscribe(out, subId++, "vh62/presence/${fr.friendId}")
+                    }
 
                     // Publish our presence every 15s
                     thread(isDaemon = true) {
@@ -367,7 +377,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 val ss = ServerSocket(TCP_PORT)
                 serverSocket = ss
                 startLanBeacon()
-                while (isHost && !isOnlineRelay) handleTcpPeer(ss.accept(), asHost = true)
+                while (isHost && !isOnlineRelay) { val c = ss.accept(); try { c.tcpNoDelay = true } catch (_: Exception) {}; handleTcpPeer(c, asHost = true) }
             } catch (_: Exception) { statusText = "LAN Сервер остановлен" }
         }
     }
@@ -379,6 +389,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             try {
                 val sock = Socket()
                 sock.connect(InetSocketAddress(ip.trim(), TCP_PORT), 4500)
+                sock.tcpNoDelay = true
                 clientSocket = sock; isConnected = true
                 statusText = "Подключено к $ip!"
                 handleTcpPeer(sock, asHost = false)
@@ -468,12 +479,15 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 val nick = inp.readUTF(); val skin = inp.readUTF()
                 val x = inp.readFloat(); val y = inp.readFloat(); val z = inp.readFloat()
                 val fr = inp.readBoolean(); val atk = inp.readFloat(); val slp = inp.readBoolean(); val hId = inp.readInt(); val rHp = inp.readFloat(); val rMaxHp = inp.readFloat()
-                val rp = remotePlayers.computeIfAbsent(peerKey) { RemotePlayer(peerKey, nick, skin, x, y, z, fr) }
-                val d = hypot((x - rp.x).toDouble(), (y - rp.y).toDouble()).toFloat()
-                rp.nick = nick; rp.skinId = skin; rp.x = x; rp.y = y; rp.z = z
-                rp.facingRight = fr; rp.attackAnim = atk; rp.isSleeping = slp; rp.heldId = hId; rp.hp = rHp; rp.maxHp = rMaxHp
+                val rp = remotePlayers.computeIfAbsent(peerKey) { RemotePlayer(peerKey, nick, skin, x, y, z, x, y, z, fr) }
+                val jump = hypot((x - rp.x).toDouble(), (y - rp.y).toDouble()).toFloat()
+                if (jump > 6.5f) { rp.x = x; rp.y = y; rp.z = z }
+                rp.nick = nick; rp.skinId = skin
+                rp.targetX = x; rp.targetY = y; rp.targetZ = z
+                rp.facingRight = fr
+                if (atk > rp.attackAnim) rp.attackAnim = atk
+                rp.isSleeping = slp; rp.heldId = hId; rp.hp = rHp; rp.maxHp = rMaxHp
                 rp.lastSeenMs = System.currentTimeMillis()
-                if (d > 0.01f) rp.walkAnim += d * 4.5f
             }
             2 -> { // BLOCK
                 val x = inp.readInt(); val y = inp.readInt(); val z = inp.readInt(); val id = inp.readInt()
@@ -564,11 +578,29 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
         }
     }
 
+    fun interpolateRemotePlayers(dt: Float) {
+        val k = kotlin.math.min(1f, dt * 14f)
+        for (rp in remotePlayers.values) {
+            val dx = rp.targetX - rp.x
+            val dy = rp.targetY - rp.y
+            val dz = rp.targetZ - rp.z
+            val d = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            rp.x += dx * k
+            rp.y += dy * k
+            rp.z += dz * k
+            rp.isMoving = d > 0.035f
+            if (rp.isMoving) rp.walkAnim += kotlin.math.min(0.6f, d) * 8.5f
+            if (rp.attackAnim > 0f) rp.attackAnim = kotlin.math.max(0f, rp.attackAnim - dt * 5f)
+        }
+    }
+
     fun sendPos(x: Float, y: Float, z: Float, facingRight: Boolean, skinId: String, attackAnim: Float, isSleeping: Boolean, heldId: Int, hp: Float, maxHp: Float) {
         if (!isConnected) return
         val now = System.currentTimeMillis()
-        remotePlayers.entries.removeIf { now - it.value.lastSeenMs > 12000L }
+        remotePlayers.entries.removeIf { now - it.value.lastSeenMs > 25000L }
+        if (!posInFlight.compareAndSet(false, true)) return
         netSendExec.execute {
+            try {
             if (!isConnected) return@execute
             if (isOnlineRelay) {
                 publishOnlinePacket { p ->
@@ -589,6 +621,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                     } catch (_: Exception) {}
                 }
             }
+            } finally { posInFlight.set(false) }
         }
     }
 
@@ -623,7 +656,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     }
 
     fun broadcastMobs(mobs: Collection<MobEntity>) {
-        if (!isConnected || !isHost) return
+        if (!isConnected || !isHost || remotePlayers.isEmpty()) return
+        if (!mobsInFlight.compareAndSet(false, true)) return
         val snap = mobs.take(24).map {
             MobSyncSnap(it.id, it.type, it.name, it.hostile, it.isBoss, it.x, it.y, it.z, it.hp, it.maxHp,
                 it.facingRight, it.walkAnim, it.attackAnim, it.hurtFlash, it.freezeTimer, it.stunTimer, it.tamed)
@@ -639,8 +673,10 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                     p.writeFloat(s.hurtFlash); p.writeFloat(s.freezeTimer); p.writeFloat(s.stunTimer); p.writeBoolean(s.tamed)
                 }
             }
+            try {
             if (isOnlineRelay) publishOnlinePacket(writer)
             else for (o in clientStreams) { try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {} }
+            } finally { mobsInFlight.set(false) }
         }
     }
 
@@ -672,7 +708,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     }
 
     fun broadcastDrops(drops: Collection<DroppedItem>) {
-        if (!isConnected || !isHost) return
+        if (!isConnected || !isHost || remotePlayers.isEmpty()) return
+        if (!dropsInFlight.compareAndSet(false, true)) return
         val snap = drops.take(28).map { DropSyncSnap(it.id, it.itemId, it.count, it.x, it.y, it.z) }
         netSendExec.execute {
             if (!isConnected || !isHost) return@execute
@@ -680,8 +717,10 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 p.writeByte(10); p.writeInt(snap.size)
                 for (s in snap) { p.writeInt(s.id); p.writeInt(s.itemId); p.writeInt(s.count); p.writeFloat(s.x); p.writeFloat(s.y); p.writeFloat(s.z) }
             }
+            try {
             if (isOnlineRelay) publishOnlinePacket(writer)
             else for (o in clientStreams) { try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {} }
+            } finally { dropsInFlight.set(false) }
         }
     }
 

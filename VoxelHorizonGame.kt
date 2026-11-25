@@ -36,6 +36,7 @@ enum class UiScreen {
 }
 
 data class IsoPick(val gx: Int, val gy: Int, val gz: Int, val id: Int)
+data class UiSlotHit(val zone: String, val index: Int, val rect: Rectangle)
 
 class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
@@ -99,7 +100,35 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private var autoAttackCd = 0f
     var baseWalkSpeed = 5.0f
     var cameraZoom = 0.85f
-    var worldFileName = "world_iso_v62.vhworld"
+    var worldFileName = "world_iso_v63.vhworld"
+
+    // Стройка и копка v6.3: режим (0=ПОЛ, 1=СТЕНА, 2=КРЫША), свайп-стройка, быстрый откат!
+    private var buildMode = 1 // 0=ПОЛ, 1=СТЕНА, 2=КРЫША
+    private var lastPlacedX = Int.MIN_VALUE; private var lastPlacedY = Int.MIN_VALUE; private var lastPlacedZ = Int.MIN_VALUE
+    private var lastPlacedId = 0; private var lastPlacedTime = -10f
+    private var dragBuildLastX = Int.MIN_VALUE; private var dragBuildLastY = Int.MIN_VALUE; private var dragBuildLastZ = Int.MIN_VALUE
+    private var isDragBuilding = false
+    private var ghostTarget: IsoPick? = null
+
+    // Плавный сетевой трекер (15 Гц только при движении или 0.45с heartbeat!)
+    private var lastSentX = 0f; private var lastSentY = 0f; private var lastSentZ = 0f
+    private var mpHeartbeatTimer = 0f
+
+    // Универсальный Drag-and-Drop инвентаря (54 слота, броня, лев. рука, сундук, печь!)
+    private val uiSlots = mutableListOf<UiSlotHit>()
+    private var dragPtr = -1
+    private var dragStartX = 0f; private var dragStartY = 0f
+    private var dragCurX = 0f; private var dragCurY = 0f
+    private var dragActive = false
+    private var dragFromZone = ""; private var dragFromIdx = -1
+    private var dragPreviewItem: SlotItem? = null
+    private var activePanelBounds = Rectangle()
+
+    // Вкладки и страницы новых визуальных экранов
+    private var invTab = 0 // 0 = Сумка (54), 1 = Крафт 2x2
+    private var chestBagPage = 0 // 0 = слоты 0..26, 1 = слоты 27..53
+    private var wbSelectedIdx = 0
+    private var wbPage = 0
     var currentWorldTitle = "Мой мир"
 
     // Minimap (32x32 native Rust radar, updated every 0.45s -> 0 FPS impact!)
@@ -211,13 +240,13 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             font = BitmapFont(pixFnt).apply {
                 region.texture.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest)
                 setUseIntegerPositions(true)
-                val sBig = (Gdx.graphics.height / 540f).coerceIn(1.1f, 2.2f)
+                val sBig = (Gdx.graphics.height / 660f).coerceIn(0.95f, 1.75f)
                 data.setScale(sBig)
             }
             fontSmall = BitmapFont(pixFnt).apply {
                 region.texture.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest)
                 setUseIntegerPositions(true)
-                val sSm = (Gdx.graphics.height / 820f).coerceIn(0.75f, 1.45f)
+                val sSm = (Gdx.graphics.height / 940f).coerceIn(0.68f, 1.22f)
                 data.setScale(sSm)
             }
             return
@@ -247,35 +276,17 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
     private fun setupStarterInventory() {
         player.slots.fill(null)
-        player.slots[0] = SlotItem(109, 1)  // Алмазная кирка
-        player.slots[1] = SlotItem(111, 1)  // Железный меч
-        player.slots[2] = SlotItem(110, 1)  // Боевой топор
-        player.slots[3] = SlotItem(56, 16)  // Приставные Лестницы
-        player.slots[4] = SlotItem(7, 24)   // Доски
-        player.slots[5] = SlotItem(37, 20)  // Факелы
-        player.slots[6] = SlotItem(38, 1)   // Кровать (попробуй лечь спать!)
-        player.slots[7] = SlotItem(61, 1)   // Камень Телепорта
-        player.slots[8] = SlotItem(115, 6)  // Жареный стейк
-        player.slots[9] = SlotItem(59, 1)   // Костёр
-        player.slots[10] = SlotItem(60, 2)  // Фонарь
-        player.slots[11] = SlotItem(57, 2)  // Дверь
-        player.slots[12] = SlotItem(132, 1) // Щит (Парирование!)
-        player.slots[13] = SlotItem(148, 1) // Тёплая меховая шуба
-        player.slots[14] = SlotItem(136, 2) // Согревающий чай
-        player.slots[15] = SlotItem(137, 2) // Отвар Шахтёра
-        player.slots[16] = SlotItem(138, 2) // Эликсир Скорости
-        player.slots[17] = SlotItem(35, 2)  // Сундук
-        player.slots[18] = SlotItem(119, 1) // Ведро воды
-        player.slots[19] = SlotItem(116, 1) // Огниво
-        player.slots[20] = SlotItem(143, 6) // Пшеница (ферма/корм)
-        player.slots[21] = SlotItem(103, 4) // Золото (обмен с Пиглином)
-        player.slots[22] = SlotItem(142, 4) // Рубины (крафт/наковальня)
-        player.slots[23] = SlotItem(150, 1) // Удочка (Рыбалка!)
-        player.slots[24] = SlotItem(72, 2)  // Шахтные Лифты (2 шт)
-        player.slots[25] = SlotItem(73, 2)  // Шипы-ловушки
-        player.slots[26] = SlotItem(74, 1)  // Авто-арбалет
-        player.offhand = SlotItem(37, 16)
-        player.armor[0] = 125
+        player.slots[0] = SlotItem(107, 1)  // Каменная кирка (честный старт!)
+        player.slots[1] = SlotItem(110, 1)  // Топор
+        player.slots[2] = SlotItem(37, 12)  // Факелы
+        player.slots[3] = SlotItem(56, 8)   // Лестницы для шахты
+        player.slots[4] = SlotItem(7, 12)   // Доски
+        player.slots[5] = SlotItem(113, 4)  // Яблоки
+        player.slots[6] = SlotItem(38, 1)   // Кровать
+        player.slots[7] = SlotItem(150, 1)  // Удочка (Рыбалка!)
+        player.slots[8] = SlotItem(35, 1)   // Сундук
+        player.offhand = SlotItem(37, 8)    // Факелы в левой руке
+        player.armor.fill(0)
     }
 
     private fun isoToScreenX(gx: Float, gy: Float): Float = (gx - gy) * WorldIso.TW
@@ -433,22 +444,70 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun handleMobKill(dead: MobEntity) {
-        val dropId = when (dead.type) {
-            "grove_guardian" -> 133; "frost_titan" -> 134; "depth_devourer" -> 135
-            "inferno_lord", "sky_guardian" -> 129
-            "sheep", "cow", "pig", "chicken", "deer", "boar" -> 115
-            "slime", "mini_slime", "magma_slime" -> 147
-            "crystal_golem" -> 141; "yeti" -> 148; "mimic" -> 104; "goblin" -> 103
-            "zombie" -> 101; "skeleton" -> 124; "creeper" -> 26; "enderman" -> 104
-            "piglin" -> 103; "blaze" -> 23; "ghast" -> 104
-            else -> 101
+        val dropsToSpawn = mutableListOf<Pair<Int, Int>>()
+        when (dead.type) {
+            // Боссы: гарантированный уникальный трофей + россыпь самоцветов!
+            "grove_guardian" -> { dropsToSpawn += 133 to 1; dropsToSpawn += 118 to 3; dropsToSpawn += 141 to 2 }
+            "frost_titan"    -> { dropsToSpawn += 134 to 1; dropsToSpawn += 118 to 3; dropsToSpawn += 104 to 2 }
+            "depth_devourer" -> { dropsToSpawn += 135 to 1; dropsToSpawn += 142 to 3; dropsToSpawn += 104 to 2 }
+            "inferno_lord"   -> { dropsToSpawn += 129 to 1; dropsToSpawn += 142 to 2; dropsToSpawn += 103 to 4 }
+            "sky_guardian"   -> { dropsToSpawn += 129 to 1; dropsToSpawn += 104 to 2; dropsToSpawn += 118 to 3 }
+
+            // Мирные и нейтральные: Сырое мясо (нужно жарить!) + Мех/Шкура
+            "sheep", "cow", "pig", "deer", "boar" -> {
+                dropsToSpawn += 157 to Random.nextInt(1, 3)
+                if (Random.nextFloat() < 0.72f) dropsToSpawn += 158 to 1
+            }
+            "chicken" -> {
+                dropsToSpawn += 157 to 1
+                if (Random.nextFloat() < 0.50f) dropsToSpawn += 124 to 2
+            }
+            "wolf" -> dropsToSpawn += 158 to Random.nextInt(1, 3)
+
+            // Враги: сбалансированный дроп ресурсов для крафта!
+            "skeleton" -> {
+                dropsToSpawn += 124 to Random.nextInt(2, 5)
+                if (Random.nextFloat() < 0.15f) dropsToSpawn += 102 to 1
+            }
+            "creeper" -> {
+                dropsToSpawn += 159 to Random.nextInt(1, 3) // Порох!
+                dropsToSpawn += 101 to 1
+            }
+            "spider" -> dropsToSpawn += 160 to Random.nextInt(1, 3) // Паутина/Нить!
+            "enderman" -> {
+                dropsToSpawn += 141 to Random.nextInt(1, 3)
+                if (Random.nextFloat() < 0.15f) dropsToSpawn += 104 to 1
+            }
+            "yeti" -> {
+                dropsToSpawn += 158 to Random.nextInt(2, 4) // 2-3 Меха на Шубу!
+                if (Random.nextFloat() < 0.25f) dropsToSpawn += 118 to 1
+            }
+            "mimic" -> {
+                dropsToSpawn += 103 to Random.nextInt(2, 4)
+                if (Random.nextFloat() < 0.35f) dropsToSpawn += (if (Random.nextBoolean()) 104 else 138) to 1
+            }
+            "goblin", "piglin" -> {
+                dropsToSpawn += (if (Random.nextBoolean()) 140 else 101) to Random.nextInt(1, 3)
+                if (Random.nextFloat() < 0.35f) dropsToSpawn += 103 to 1
+            }
+            "crystal_golem" -> {
+                dropsToSpawn += 141 to Random.nextInt(2, 4)
+                if (Random.nextFloat() < 0.30f) dropsToSpawn += 142 to 1
+            }
+            "slime", "mini_slime", "magma_slime" -> dropsToSpawn += 147 to 1
+            "blaze" -> dropsToSpawn += 23 to 1
+            "ghast" -> { dropsToSpawn += 159 to 2; if (Random.nextFloat() < 0.30f) dropsToSpawn += 104 to 1 }
+            "zombie" -> { dropsToSpawn += 101 to 1; if (Random.nextFloat() < 0.15f) dropsToSpawn += 102 to 1 }
+            else -> dropsToSpawn += 101 to 1
         }
-        entities.spawnDrop(dropId, 1, dead.x, dead.y, dead.z)
+        for ((dId, dCnt) in dropsToSpawn) {
+            entities.spawnDrop(dId, dCnt, dead.x + (Random.nextFloat() - 0.5f) * 0.4f, dead.y + (Random.nextFloat() - 0.5f) * 0.4f, dead.z)
+        }
         val leveledUp = profiles.recordMobKill(dead.type, dead.isBoss)
         SoundFx.play(if (dead.isBoss || leveledUp) "levelup" else "hit", 0.75f)
-        val dropName = BlockRegistry.items[dropId]?.name ?: ""
+        val firstDropName = BlockRegistry.items[dropsToSpawn.firstOrNull()?.first ?: 0]?.name ?: ""
         showToast(when {
-            dead.isBoss -> "БОСС ПОВЕРЖЕН! Награда: $dropName!"
+            dead.isBoss -> "БОСС ПОВЕРЖЕН! Награда: $firstDropName!"
             leveledUp -> "УРОВЕНЬ БОЯ ${profiles.active.combatLevel()}! (+шанс крита)"
             else -> "Побеждён: ${dead.name}"
         })
@@ -457,8 +516,64 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private fun pickIsoBlock(screenX: Float, screenY: Float): IsoPick? {
         tmpVec3.set(screenX, screenY, 0f)
         camWorld.unproject(tmpVec3)
-        RustEngine.nativePickIsoBlock(tmpVec3.x, tmpVec3.y, floor(player.z).toInt(), activeSliceZ, rustPickBuf)
+        RustEngine.nativePickIsoBlock(
+            tmpVec3.x, tmpVec3.y,
+            floor(player.x).toInt(), floor(player.y).toInt(), floor(player.z).toInt(),
+            activeSliceZ, isCutawayActive, rustPickBuf
+        )
         return IsoPick(rustPickIntView.get(0), rustPickIntView.get(1), rustPickIntView.get(2), rustPickIntView.get(3))
+    }
+
+    // Точный расчёт ячейки для стройки по плоскости (ПОЛ / СТЕНА / КРЫША) — никогда не ставит блок на стену спереди!
+    private fun pickBuildCellOnPlane(screenX: Float, screenY: Float): IsoPick? {
+        tmpVec3.set(screenX, screenY, 0f)
+        camWorld.unproject(tmpVec3)
+        val pz = floor(player.z).toInt().coerceIn(1, WorldIso.MAX_Z - 4)
+        val planeZ = when (buildMode) {
+            0 -> max(1, pz - 1) // ПОЛ
+            2 -> min(WorldIso.MAX_Z - 1, pz + 3) // КРЫША
+            else -> pz // СТЕНА (на уровне ног!)
+        }
+        val adj = tmpVec3.y - (planeZ + (if (buildMode == 0) 1f else 0.35f)) * WorldIso.ZH
+        val gx = Math.round(0.5f * (tmpVec3.x / WorldIso.TW - adj / WorldIso.TH))
+        val gy = Math.round(0.5f * (-adj / WorldIso.TH - tmpVec3.x / WorldIso.TW))
+
+        val targetZ = when (buildMode) {
+            0 -> if (world.getBlock(gx, gy, planeZ) == 0 || BlockRegistry.items[world.getBlock(gx, gy, planeZ)]?.isLiquid == true) planeZ else pz
+            2 -> planeZ
+            else -> {
+                // В режиме СТЕНА: если на pz уже стоит блок стены, наращиваем вверх до 3 блоков (pz+1, pz+2)!
+                var tz = pz
+                while (tz < pz + 3 && tz < WorldIso.MAX_Z - 1 && world.getBlock(gx, gy, tz) > 0 && BlockRegistry.items[world.getBlock(gx, gy, tz)]?.isLiquid == false) {
+                    tz++
+                }
+                tz
+            }
+        }
+        return IsoPick(gx, gy, targetZ.coerceIn(1, WorldIso.MAX_Z - 1), world.getBlock(gx, gy, targetZ.coerceIn(1, WorldIso.MAX_Z - 1)))
+    }
+
+    private fun tryPlaceHeldBlockAt(gx: Int, gy: Int, tz: Int): Boolean {
+        val held = player.slots[player.selectedSlot]
+        val hDef = held?.let { BlockRegistry.items[it.id] }
+        val placeSlot = if (hDef != null && !hDef.isItem) held
+        else if (player.offhand != null && BlockRegistry.items[player.offhand!!.id]?.isItem == false) player.offhand
+        else null
+        val pSlot = placeSlot ?: return false
+        val pDef = BlockRegistry.items[pSlot.id] ?: return false
+        if (hypot((gx + 0.5f - player.x).toDouble(), (gy + 0.5f - player.y).toDouble()) > 5.0) return false
+        if (tz !in 1 until WorldIso.MAX_Z) return false
+        val cur = world.getBlock(gx, gy, tz)
+        if (cur != 0 && BlockRegistry.items[cur]?.isLiquid != true) return false
+        if (pDef.solid && floor(player.x).toInt() == gx && floor(player.y).toInt() == gy && (floor(player.z).toInt() == tz || floor(player.z).toInt() + 1 == tz)) return false
+        if (player.takeItem(pSlot.id, 1)) {
+            setWorldBlock(gx, gy, tz, pSlot.id)
+            entities.spawnBlockParticles(gx, gy, tz, pDef.colorHex, 5)
+            SoundFx.play("mine", 0.4f)
+            lastPlacedX = gx; lastPlacedY = gy; lastPlacedZ = tz; lastPlacedId = pSlot.id; lastPlacedTime = elapsed
+            return true
+        }
+        return false
     }
 
     private fun findNearestInteractive(cx: Float, cy: Float, cz: Int, maxRad: Float): IsoPick? {
@@ -598,9 +713,15 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             138 -> if (player.takeItem(138, 1)) { player.speedBuffTimer = 45f; showToast("Эликсир Скорости (+45% бег)!"); return true }
         }
         if (hDef.healFood > 0 && !player.creative && (player.food < player.maxFood || player.hp < player.maxHp)) {
+            if (player.foodCooldown > 0f) {
+                showToast("Подождите ${"%.1f".format(player.foodCooldown)}с перед следующей едой!")
+                return true
+            }
             if (player.takeItem(held.id, 1)) {
+                player.foodCooldown = 3.5f
                 player.food = min(player.maxFood, player.food + hDef.healFood)
                 player.hp = min(player.maxHp, player.hp + hDef.healHp)
+                SoundFx.play("pickup", 0.55f)
                 entities.floatingTexts.add(FloatingText(player.x, player.y, player.z + 1.5f, "+${hDef.healHp} HP", Color.GREEN))
                 showToast("Съедено: ${hDef.name}")
                 return true
@@ -834,14 +955,17 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val pSlot = placeSlot ?: return
         val pDef = BlockRegistry.items[pSlot.id] ?: return
 
-        val targetZ = if (pick.id == 0) pick.gz else pick.gz + 1
-        if (targetZ in 1 until WorldIso.MAX_Z && world.getBlock(pick.gx, pick.gy, targetZ) == 0) {
-            if (pDef.solid && floor(player.x).toInt() == pick.gx && floor(player.y).toInt() == pick.gy && floor(player.z).toInt() == targetZ) return
-            if (player.takeItem(pSlot.id, 1)) {
-                setWorldBlock(pick.gx, pick.gy, targetZ, pSlot.id)
-                entities.spawnBlockParticles(pick.gx, pick.gy, targetZ, pDef.colorHex, 5)
-            }
+        // Быстрый откат (если случайно поставил блок — повторный тап за 2с сразу вернёт его в рюкзак!)
+        if ((elapsed - lastPlacedTime) <= 2.2f && pick.gx == lastPlacedX && pick.gy == lastPlacedY && pick.gz == lastPlacedZ && pick.id == lastPlacedId && pick.id > 0) {
+            setWorldBlock(pick.gx, pick.gy, pick.gz, 0)
+            if (!player.creative) player.addItem(lastPlacedId, 1)
+            lastPlacedTime = -10f
+            SoundFx.play("pickup", 0.55f)
+            showToast("Блок возвращён в рюкзак!")
+            return
         }
+        val targetZ = if (pick.id == 0) pick.gz else pick.gz + 1
+        tryPlaceHeldBlockAt(pick.gx, pick.gy, targetZ)
     }
 
     private fun updateMining(dt: Float) {
@@ -887,6 +1011,34 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             }
             if (bId in intArrayOf(5, 27, 45, 46) && hDef?.toolType == "axe") {
                 for (dz in 1..4) if (world.getBlock(mineX, mineY, mineZ + dz) == bId) breakSingle(mineX, mineY, mineZ + dz)
+            }
+            // Авто-тоннель 1x2 в шахте: пробиваешь блок на уровне ног -> блок на уровне головы ломается сам!
+            if (hDef?.toolType == "pick" && (isCutawayActive || player.z < WorldIso.SEA_Z - 1) && mineZ == floor(player.z).toInt()) {
+                val headB = world.getBlock(mineX, mineY, mineZ + 1)
+                if (headB > 0 && (BlockRegistry.items[headB]?.hardness ?: 999f) < 900f) {
+                    breakSingle(mineX, mineY, mineZ + 1)
+                }
+            }
+            // Vein Miner для руд: выкапывает сразу 2..4 соседних блока той же руды (растёт с навыком Шахтёра!)
+            if (bDef.isOre && hDef?.toolType == "pick") {
+                val maxExtra = (1 + profiles.active.miningLevel() / 3).coerceAtMost(4)
+                var broken = 0
+                val q = ArrayDeque<Triple<Int, Int, Int>>()
+                val seen = HashSet<Triple<Int, Int, Int>>()
+                q.addLast(Triple(mineX, mineY, mineZ)); seen.add(Triple(mineX, mineY, mineZ))
+                val dirs = arrayOf(Triple(1,0,0), Triple(-1,0,0), Triple(0,1,0), Triple(0,-1,0), Triple(0,0,1), Triple(0,0,-1))
+                while (q.isNotEmpty() && broken < maxExtra) {
+                    val cur = q.removeFirst()
+                    for ((dx, dy, dz) in dirs) {
+                        val nb = Triple(cur.first + dx, cur.second + dy, cur.third + dz)
+                        if (nb.third in 1 until WorldIso.MAX_Z && seen.add(nb) && world.getBlock(nb.first, nb.second, nb.third) == bId) {
+                            breakSingle(nb.first, nb.second, nb.third)
+                            broken++
+                            if (broken >= maxExtra) break
+                            q.addLast(nb)
+                        }
+                    }
+                }
             }
             mineProgress = 0f; holdingMine = false
         }
@@ -952,7 +1104,37 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         player.hp = max(0f, player.hp - dmg)
         player.hurtFlash = 0.24f; player.hurtSquash = 1.0f; shakeTimer = 0.2f; SoundFx.play("hurt", 0.7f)
         entities.floatingTexts.add(FloatingText(player.x, player.y, player.z + 1.5f, "-${dmg.toInt()}", Color(1f, 0.25f, 0.3f, 1f)))
-        if (player.hp <= 0f) screen = UiScreen.DEATH
+        if (player.hp <= 0f) {
+            if (!player.creative) spawnGraveChest()
+            screen = UiScreen.DEATH
+        }
+    }
+
+    private fun spawnGraveChest() {
+        val gx = floor(player.x).toInt(); val gy = floor(player.y).toInt()
+        val gz = floor(player.z).toInt().coerceIn(1, WorldIso.MAX_Z - 1)
+        val grave = world.getChest(gx, gy, gz)
+        var putAny = false
+        for (i in 0 until PlayerState.INV_SIZE) {
+            val s = player.slots[i] ?: continue
+            val d = BlockRegistry.items[s.id] ?: continue
+            // Оружие, кирки, броню и щит ВСЕГДА сохраняем при игроке! В могилку идёт половина сырья/ресурсов.
+            val keepSafe = d.toolType.isNotEmpty() || d.weaponStyle.isNotEmpty() || d.armorSlot >= 0 || s.id == 132 || s.id == 150
+            if (keepSafe || s.count <= 1) continue
+            val dropHalf = s.count / 2
+            val emptyIdx = grave.indexOfFirst { it == null }
+            if (dropHalf > 0 && emptyIdx >= 0) {
+                grave[emptyIdx] = SlotItem(s.id, dropHalf)
+                s.count -= dropHalf
+                putAny = true
+            }
+        }
+        if (putAny) {
+            setWorldBlock(gx, gy, gz, 35)
+            customMarkerX = gx; customMarkerY = gy
+            if (netMp.isConnected) netMp.broadcastChest(gx, gy, gz, grave)
+            showToast("Сундук-могилка оставлен на X:$gx Y:$gy (отмечен на карте!)")
+        }
     }
 
     private fun updatePlayerTemperatureAndBuffs(dt: Float) {
@@ -1045,7 +1227,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
 
         val speedBuff = if (player.speedBuffTimer > 0f) 1.45f else 1.0f
-        val spd = baseWalkSpeed * speedBuff * min(1f, inLen) * (if (inWater) 0.58f else if (inLen > 0.85f) 1.32f else 1.0f)
+        val inDeepDark = isCutawayActive && player.z < WorldIso.SEA_Z - 4 && (BlockRegistry.items[player.slots[player.selectedSlot]?.id ?: 0]?.lightRadius ?: 0f) <= 0f && (BlockRegistry.items[player.offhand?.id ?: 0]?.lightRadius ?: 0f) <= 0f
+        val darkMult = if (inDeepDark) 0.85f else 1.0f
+        val spd = baseWalkSpeed * speedBuff * darkMult * min(1f, inLen) * (if (inWater) 0.58f else if (inLen > 0.85f) 1.32f else 1.0f)
         player.vx += (gxDir * spd - player.vx) * min(1f, dt * 11f)
         player.vy += (gyDir * spd - player.vy) * min(1f, dt * 11f)
 
@@ -1069,6 +1253,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
 
         if (player.dashCooldown > 0f) player.dashCooldown = max(0f, player.dashCooldown - dt)
+        if (player.foodCooldown > 0f) player.foodCooldown = max(0f, player.foodCooldown - dt)
         if (player.attackAnim > 0f) player.attackAnim = max(0f, player.attackAnim - dt * 5f)
     }
 
@@ -1086,7 +1271,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
         if (screen == UiScreen.PLAYING) {
             // Долгое удержание пальца на блоке (> 0.20с) запускает непрерывную копку!
-            if (worldTouchPtr != -1 && !worldTouchHeldActed && (elapsed - worldTouchDownTime) >= 0.20f) {
+            val heldIsBlockNow = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id]?.isItem == false } == true
+            if (worldTouchPtr != -1 && !worldTouchHeldActed && !isDragBuilding && !heldIsBlockNow && (elapsed - worldTouchDownTime) >= 0.20f) {
                 worldTouchHeldActed = true
                 pickIsoBlock(worldTouchStartX, worldTouchStartY)?.let { pk ->
                     targetPick = pk
@@ -1142,18 +1328,22 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 }
             }
             if (netMp.isConnected) {
+                netMp.interpolateRemotePlayers(dt)
                 mpPosTimer += dt
-                if (mpPosTimer >= 0.10f) {
-                    mpPosTimer = 0f
+                mpHeartbeatTimer += dt
+                val movedEnough = abs(player.x - lastSentX) + abs(player.y - lastSentY) + abs(player.z - lastSentZ) > 0.03f || player.attackAnim > 0.1f
+                if ((mpPosTimer >= 0.066f && movedEnough) || mpHeartbeatTimer >= 0.45f) {
+                    mpPosTimer = 0f; mpHeartbeatTimer = 0f
+                    lastSentX = player.x; lastSentY = player.y; lastSentZ = player.z
                     netMp.sendPos(player.x, player.y, player.z, player.facingRight, player.skinId, player.attackAnim, player.isSleeping, player.slots[player.selectedSlot]?.id ?: 0, player.hp, player.maxHp)
                 }
-                if (netMp.isHost) {
+                if (netMp.isHost && netMp.remotePlayers.isNotEmpty()) {
                     mpTimeSyncTimer += dt
-                    if (mpTimeSyncTimer >= 2.5f) { mpTimeSyncTimer = 0f; netMp.broadcastTime(entities.dayCount, entities.worldTime) }
+                    if (mpTimeSyncTimer >= 3.0f) { mpTimeSyncTimer = 0f; netMp.broadcastTime(entities.dayCount, entities.worldTime) }
                     mpMobSyncTimer += dt
-                    if (mpMobSyncTimer >= 0.14f) { mpMobSyncTimer = 0f; netMp.broadcastMobs(entities.mobs) }
+                    if (mpMobSyncTimer >= 0.16f) { mpMobSyncTimer = 0f; netMp.broadcastMobs(entities.mobs) }
                     mpDropSyncTimer += dt
-                    if (mpDropSyncTimer >= 0.35f) { mpDropSyncTimer = 0f; netMp.broadcastDrops(entities.drops) }
+                    if (mpDropSyncTimer >= 0.45f) { mpDropSyncTimer = 0f; netMp.broadcastDrops(entities.drops) }
                 }
             }
         }
@@ -1340,7 +1530,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val rp = rList[i]
                 val rpx = isoToScreenX(rp.x, rp.y); val rpy = isoToScreenY(rp.x, rp.y, rp.z)
                 drawAnimatedHero(
-                    rpx, rpy, rp.skinId, rp.facingRight, rp.walkAnim, moving = true,
+                    rpx, rpy, rp.skinId, rp.facingRight, rp.walkAnim, moving = rp.isMoving,
                     heldId = rp.heldId, attackAnim = rp.attackAnim, attackAngle = 0f,
                     isSleeping = rp.isSleeping, hurtFlash = 0f, hurtSquash = 0f,
                     armorHelmet = 0, armorChest = 0, hasShieldOffhand = false
@@ -1401,6 +1591,28 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             spriteBatch.draw(SpriteArt.whitePx, px, py, pt.size, pt.size)
         }
         spriteBatch.color = Color.WHITE
+
+        // Призрачный контур (Ghost Preview) — сразу видно, куда встанет блок при стройке!
+        val heldDefPrev = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
+        if (screen == UiScreen.PLAYING && !player.isSleeping && heldDefPrev != null && !heldDefPrev.isItem) {
+            val gPick = ghostTarget ?: run {
+                val fx = floor(player.x + player.aimGx * 1.35f).toInt()
+                val fy = floor(player.y + player.aimGy * 1.35f).toInt()
+                val pzI = floor(player.z).toInt()
+                val gz = when (buildMode) { 0 -> max(1, pzI - 1); 2 -> min(WorldIso.MAX_Z - 1, pzI + 3); else -> pzI }
+                IsoPick(fx, fy, gz, world.getBlock(fx, fy, gz))
+            }
+            val gsX = isoToScreenX(gPick.gx.toFloat(), gPick.gy.toFloat())
+            val gsY = isoToScreenY(gPick.gx.toFloat(), gPick.gy.toFloat(), gPick.gz.toFloat())
+            val gsTop = gsY + ZH
+            val pulseG = 0.28f + sin(elapsed * 6f) * 0.08f
+            val canPlaceG = world.getBlock(gPick.gx, gPick.gy, gPick.gz) == 0 || BlockRegistry.items[world.getBlock(gPick.gx, gPick.gy, gPick.gz)]?.isLiquid == true
+            val gBits = if (canPlaceG) Color.toFloatBits(0.32f, 0.90f, 1f, pulseG) else Color.toFloatBits(1f, 0.30f, 0.35f, pulseG)
+            val gSide = if (canPlaceG) Color.toFloatBits(0.22f, 0.72f, 0.92f, pulseG * 0.75f) else Color.toFloatBits(0.85f, 0.22f, 0.28f, pulseG * 0.75f)
+            drawIsoQuad(SpriteArt.whitePx, gsX - TW, gsY, gsX - TW, gsTop, gsX, gsTop - TH, gsX, gsY - TH, gSide, 0f, 0f, 1f, 1f)
+            drawIsoQuad(SpriteArt.whitePx, gsX, gsY - TH, gsX, gsTop - TH, gsX + TW, gsTop, gsX + TW, gsY, gSide, 0f, 0f, 1f, 1f)
+            drawIsoQuad(SpriteArt.whitePx, gsX - TW, gsTop, gsX, gsTop + TH, gsX + TW, gsTop, gsX, gsTop - TH, gBits, 0f, 0f, 1f, 1f)
+        }
 
         // Подсветка добываемого блока + прогресс бар
         targetPick?.let { sel ->
@@ -1711,6 +1923,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
     private fun render2DUI() {
         buttons.clear()
+        uiSlots.clear()
         val W = Gdx.graphics.width.toFloat(); val H = Gdx.graphics.height.toFloat()
         camUI.setToOrtho(false, W, H); camUI.update()
 
@@ -1745,6 +1958,12 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     screen = UiScreen.PLAYING
                 }
             }
+        }
+
+        // Плавная иконка перетаскиваемого предмета прямо под пальцем!
+        if (dragActive && dragPreviewItem != null) {
+            val sz = min(W, H) * 0.11f
+            drawSlotBox(dragCurX - sz * 0.5f, dragCurY - sz * 0.5f, sz, dragPreviewItem, selected = true)
         }
 
         if (toastTimer > 0f && toastText.isNotEmpty()) {
@@ -1801,7 +2020,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val pr = profiles.active
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        fontSmall.draw(spriteBatch, "Rust Engine v6.2 • 250 Слоёв", px + 16f, py + ph - 16f)
+        fontSmall.draw(spriteBatch, "Rust Engine v6.3 • 54 Слота + Плавный Онлайн", px + 16f, py + ph - 16f)
         fontSmall.draw(spriteBatch, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 16f, py + ph - 42f)
         spriteBatch.end()
 
@@ -1928,48 +2147,229 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
     }
 
+    private fun drawInteractiveSlot(zone: String, idx: Int, x: Float, y: Float, sz: Float, item: SlotItem?, selected: Boolean = false) {
+        val isBeingDragged = dragActive && dragFromZone == zone && dragFromIdx == idx
+        drawSlotBox(x, y, sz, if (isBeingDragged) null else item, selected = selected)
+        uiSlots += UiSlotHit(zone, idx, Rectangle(x, y, sz, sz))
+    }
+
+    private fun getSlotRef(zone: String, idx: Int): SlotItem? = when (zone) {
+        "inv" -> if (idx in 0 until PlayerState.INV_SIZE) player.slots[idx] else null
+        "offhand" -> player.offhand
+        "armor" -> if (idx in 0..3 && player.armor[idx] > 0) SlotItem(player.armor[idx], 1) else null
+        "chest" -> openChestPos?.let { p -> world.getChest(p.first, p.second, p.third).getOrNull(idx) }
+        "furnace_in" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).input }
+        "furnace_fuel" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).fuel }
+        "furnace_out" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).output }
+        else -> null
+    }
+
+    private fun setSlotRef(zone: String, idx: Int, item: SlotItem?) {
+        when (zone) {
+            "inv" -> if (idx in 0 until PlayerState.INV_SIZE) player.slots[idx] = item
+            "offhand" -> player.offhand = item
+            "armor" -> if (idx in 0..3) player.armor[idx] = item?.id ?: 0
+            "chest" -> openChestPos?.let { p ->
+                val arr = world.getChest(p.first, p.second, p.third)
+                if (idx in 0 until 27) { arr[idx] = item; netMp.broadcastChest(p.first, p.second, p.third, arr) }
+            }
+            "furnace_in" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).input = item }
+            "furnace_fuel" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).fuel = item }
+            "furnace_out" -> openFurnacePos?.let { p -> world.getFurnace(p.first, p.second, p.third).output = item }
+        }
+    }
+
+    private fun handleSlotDrop(fromZ: String, fromI: Int, toZ: String, toI: Int) {
+        if (fromZ == toZ && fromI == toI) return
+        val src = getSlotRef(fromZ, fromI) ?: return
+        val dst = getSlotRef(toZ, toI)
+
+        // Валидация слотов брони и выходного слота печи
+        if (toZ == "furnace_out") return
+        if (toZ == "armor") {
+            val sDef = BlockRegistry.items[src.id]
+            if (sDef == null || sDef.armorSlot != toI) { showToast("Сюда подходит только броня этого слота!"); return }
+            if (src.count > 1) return
+        }
+        if (fromZ == "armor" && dst != null) {
+            val dDef = BlockRegistry.items[dst.id]
+            if (dDef == null || dDef.armorSlot != fromI) return
+        }
+        if (toZ == "furnace_in" && !BlockRegistry.smeltMap.containsKey(src.id)) {
+            showToast("Это нельзя переплавить в печи!"); return
+        }
+        if (toZ == "furnace_fuel" && (BlockRegistry.items[src.id]?.fuelPower ?: 0f) <= 0f) {
+            showToast("Это не топливо (нужен Уголь, Доски или Брёвна)!"); return
+        }
+
+        // Объединяем стаки, если одинаковый ID!
+        if (dst != null && dst.id == src.id && dst.count < 64 && toZ != "armor") {
+            val move = min(64 - dst.count, src.count)
+            dst.count += move
+            src.count -= move
+            if (src.count <= 0) setSlotRef(fromZ, fromI, null) else setSlotRef(fromZ, fromI, src)
+            setSlotRef(toZ, toI, dst)
+        } else {
+            // Меняем местами!
+            setSlotRef(toZ, toI, src)
+            setSlotRef(fromZ, fromI, dst)
+        }
+        SoundFx.play("pickup", 0.45f)
+    }
+
+    private fun handleSlotQuickTap(zone: String, idx: Int) {
+        val item = getSlotRef(zone, idx)
+        when (screen) {
+            UiScreen.INVENTORY -> {
+                if (zone == "inv") {
+                    invSelectedSlot = idx
+                } else if (zone == "armor" && item != null) {
+                    if (player.addItem(item.id, 1)) { setSlotRef("armor", idx, null); SoundFx.play("pickup", 0.45f) }
+                } else if (zone == "offhand" && item != null) {
+                    if (player.addItem(item.id, item.count)) { setSlotRef("offhand", 0, null); SoundFx.play("pickup", 0.45f) }
+                }
+            }
+            UiScreen.CHEST -> {
+                val p = openChestPos ?: return
+                val ch = world.getChest(p.first, p.second, p.third)
+                if (zone == "chest" && item != null) {
+                    if (player.addItem(item.id, item.count)) {
+                        ch[idx] = null; netMp.broadcastChest(p.first, p.second, p.third, ch); SoundFx.play("pickup", 0.45f)
+                    }
+                } else if (zone == "inv" && item != null) {
+                    val empty = ch.indexOfFirst { it == null }
+                    if (empty >= 0) {
+                        ch[empty] = SlotItem(item.id, item.count); player.slots[idx] = null
+                        netMp.broadcastChest(p.first, p.second, p.third, ch); SoundFx.play("pickup", 0.45f)
+                    }
+                }
+            }
+            UiScreen.FURNACE -> {
+                if (zone in setOf("furnace_in", "furnace_fuel", "furnace_out") && item != null) {
+                    if (player.addItem(item.id, item.count)) { setSlotRef(zone, idx, null); SoundFx.play("pickup", 0.5f) }
+                } else if (zone == "inv" && item != null) {
+                    val f = openFurnacePos?.let { world.getFurnace(it.first, it.second, it.third) } ?: return
+                    if (BlockRegistry.smeltMap.containsKey(item.id) && (f.input == null || f.input!!.id == item.id)) {
+                        f.input = if (f.input == null) SlotItem(item.id, item.count) else SlotItem(item.id, f.input!!.count + item.count)
+                        player.slots[idx] = null; SoundFx.play("pickup", 0.45f)
+                    } else if ((BlockRegistry.items[item.id]?.fuelPower ?: 0f) > 0f && (f.fuel == null || f.fuel!!.id == item.id)) {
+                        f.fuel = if (f.fuel == null) SlotItem(item.id, item.count) else SlotItem(item.id, f.fuel!!.count + item.count)
+                        player.slots[idx] = null; SoundFx.play("pickup", 0.45f)
+                    }
+                }
+            }
+            else -> {}
+        }
+    }
+
+    private fun drawRecipeCard(x: Float, y: Float, w: Float, h: Float, rec: RecipeDef, canCraft: Boolean, onCraft: () -> Unit) {
+        drawPanel(x, y, w, h, badge = true)
+        val icoSz = min(h - 14f, 52f)
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        BlockRegistry.getIconRegion(rec.outId)?.let { spriteBatch.draw(it, x + 10f, y + (h - icoSz) * 0.5f, icoSz, icoSz) }
+        val outName = "${BlockRegistry.items[rec.outId]?.name ?: ""} x${rec.outCount}"
+        fontSmall.color = if (canCraft) Color(0.65f, 1f, 0.72f, 1f) else Color(0.86f, 0.84f, 0.90f, 1f)
+        fontSmall.draw(spriteBatch, outName, x + icoSz + 18f, y + h - 10f)
+        // Мини-иконки ингредиентов с счётчиками!
+        var ix = x + icoSz + 18f
+        val mini = min(h * 0.40f, 26f)
+        for ((reqId, reqCnt) in rec.req) {
+            BlockRegistry.getIconRegion(reqId)?.let { spriteBatch.draw(it, ix, y + 8f, mini, mini) }
+            val have = player.countItem(reqId)
+            fontSmall.color = if (player.creative || have >= reqCnt) Color(0.55f, 0.98f, 0.62f, 1f) else Color(1f, 0.45f, 0.45f, 1f)
+            val txt = "$have/$reqCnt"
+            glyphLayout.setText(fontSmall, txt)
+            fontSmall.draw(spriteBatch, txt, ix + mini + 4f, y + 8f + mini * 0.85f)
+            ix += mini + glyphLayout.width + 14f
+        }
+        fontSmall.color = Color.WHITE
+        spriteBatch.end()
+        val btnW = min(w * 0.25f, 128f)
+        drawButton(x + w - btnW - 8f, y + 8f, btnW, h - 16f, "СОЗДАТЬ", green = canCraft, centered = true) { onCraft() }
+    }
+
     private fun renderTraderQuestsScreen(W: Float, H: Float) {
-        drawPanel(W * 0.08f, H * 0.07f, W * 0.84f, H * 0.86f)
+        val px = W * 0.06f; val py = H * 0.06f; val pw = W * 0.88f; val ph = H * 0.88f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+
         val q = profiles.currentQuest()
         val have = player.countItem(q.targetItemId)
         val canTurnIn = have >= q.targetCount
+        val topH = ph * 0.12f
 
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        font.draw(spriteBatch, "ДЕРЕВЕНСКИЙ ТОРГОВЕЦ И ЗАДАНИЯ", W * 0.11f, H * 0.88f)
-        fontSmall.draw(spriteBatch, "Ваши Изумруды: ${player.countItem(118)} | Золото: ${player.countItem(103)}", W * 0.11f, H * 0.81f)
+        font.draw(spriteBatch, "ЛАВКА ТОРГОВЦА", px + 22f, py + ph - topH * 0.26f)
+        // Иконки валюты игрока справа от заголовка
+        val curIco = min(topH * 0.62f, 34f)
+        val curY = py + ph - topH * 0.82f
+        val curX = px + pw * 0.44f
+        BlockRegistry.getIconRegion(118)?.let { spriteBatch.draw(it, curX, curY, curIco, curIco) }
+        fontSmall.draw(spriteBatch, "x${player.countItem(118)}", curX + curIco + 6f, curY + curIco * 0.78f)
+        BlockRegistry.getIconRegion(103)?.let { spriteBatch.draw(it, curX + 120f, curY, curIco, curIco) }
+        fontSmall.draw(spriteBatch, "x${player.countItem(103)}", curX + 120f + curIco + 6f, curY + curIco * 0.78f)
         spriteBatch.end()
-        drawButton(W * 0.78f, H * 0.83f, 118f, 44f, "Закрыть", centered = true) { screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - 12f, py + ph - topH - 6f, topH * 1.1f, topH * 0.86f, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
 
-        // Карточка активного задания
-        drawButton(W * 0.11f, H * 0.69f, W * 0.78f, 52f, "ЗАДАНИЕ: ${q.title} ($have/${q.targetCount}) -> Награда: ${q.rewardEmeralds} Изумр. + ${q.rewardXp} XP", green = canTurnIn, centered = true) {
+        // Визуальная карточка ЗАДАНИЯ с иконкой цели и полосой прогресса!
+        val qH = ph * 0.19f; val qY = py + ph - topH - qH - 14f
+        drawPanel(px + 18f, qY, pw - 36f, qH, badge = true)
+        val qIco = min(qH - 18f, 54f)
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        BlockRegistry.getIconRegion(q.targetItemId)?.let { spriteBatch.draw(it, px + 30f, qY + (qH - qIco) * 0.5f, qIco, qIco) }
+        fontSmall.draw(spriteBatch, "ЗАДАНИЕ: ${q.title}", px + 42f + qIco, qY + qH - 12f)
+        // Полоска прогресса задания
+        val barX = px + 42f + qIco; val barW = pw * 0.44f; val barH = qH * 0.24f; val barY = qY + 14f
+        SpriteArt.barFramePatch.draw(spriteBatch, barX, barY, barW, barH)
+        spriteBatch.setColor(0.24f, 0.86f, 0.44f, 1f)
+        spriteBatch.draw(SpriteArt.whitePx, barX + 4f, barY + 4f, (barW - 8f) * (have.toFloat() / max(1, q.targetCount)).coerceIn(0f, 1f), barH - 8f)
+        spriteBatch.color = Color.WHITE
+        fontSmall.draw(spriteBatch, "$have / ${q.targetCount}   (+${q.rewardEmeralds} Изумр. +${q.rewardXp} XP)", barX + barW + 14f, barY + barH * 0.9f)
+        spriteBatch.end()
+        drawButton(px + pw - 166f, qY + 10f, 138f, qH - 20f, "СДАТЬ", green = canTurnIn, centered = true) {
             if (canTurnIn && player.takeItem(q.targetItemId, q.targetCount)) {
                 player.addItem(118, q.rewardEmeralds)
-                profiles.active.miningXp += q.rewardXp / 2
-                profiles.active.combatXp += q.rewardXp / 2
-                profiles.active.activeQuestIdx++
-                profiles.saveProfiles()
-                SoundFx.play("levelup", 0.8f)
-                showToast("Задание выполнено! +${q.rewardEmeralds} Изумрудов!")
+                profiles.active.miningXp += q.rewardXp / 2; profiles.active.combatXp += q.rewardXp / 2
+                profiles.active.activeQuestIdx++; profiles.saveProfiles()
+                SoundFx.play("levelup", 0.8f); showToast("Задание выполнено! +${q.rewardEmeralds} Изумрудов!")
             } else showToast("Соберите ещё: ${q.title}")
         }
 
-        // Товары Торговца
+        // Визуальные карточки товаров (2 колонки x 3 ряда: [Цена Иконка] -> [Товар Иконка] + КУПИТЬ!)
         val trades = listOf(
-            Triple(150, 1, Pair(118, 2)), // Удочка за 2 Изумруда
-            Triple(72,  2, Pair(118, 3)), // 2 Шахтных Лифта за 3 Изумруда
-            Triple(74,  1, Pair(118, 4)), // Авто-арбалет за 4 Изумруда
-            Triple(73,  4, Pair(103, 2)), // 4 Шипы-ловушки за 2 Золота
-            Triple(141, 3, Pair(103, 2)), // 3 Аметиста за 2 Золота
-            Triple(142, 2, Pair(118, 3))  // 2 Рубина за 3 Изумруда
+            Triple(150, 1, Pair(118, 2)),
+            Triple(72,  2, Pair(118, 3)),
+            Triple(74,  1, Pair(118, 4)),
+            Triple(73,  4, Pair(103, 2)),
+            Triple(141, 3, Pair(103, 2)),
+            Triple(142, 2, Pair(118, 3))
         )
-        val colW = W * 0.38f
+        val gridTop = qY - 12f
+        val rowH = (gridTop - (py + 16f)) / 3f - 8f
+        val colW = (pw - 52f) * 0.5f
         trades.forEachIndexed { i, (outId, outCnt, cost) ->
             val canBuy = player.creative || player.countItem(cost.first) >= cost.second
-            val bx = W * 0.11f + (i % 2) * (colW + 16f)
-            val by = H * 0.54f - (i / 2) * 58f
-            val costName = BlockRegistry.items[cost.first]?.name ?: ""
-            drawButton(bx, by, colW, 48f, "${BlockRegistry.items[outId]?.name} x$outCnt — ${cost.second} $costName", green = canBuy) {
+            val cx = px + 18f + (i % 2) * (colW + 16f)
+            val cy = gridTop - (i / 2 + 1) * (rowH + 8f) + 8f
+            drawPanel(cx, cy, colW, rowH, badge = true)
+            val ico = min(rowH - 18f, 48f)
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            // Товар слева
+            BlockRegistry.getIconRegion(outId)?.let { spriteBatch.draw(it, cx + 12f, cy + (rowH - ico) * 0.5f, ico, ico) }
+            fontSmall.draw(spriteBatch, "${BlockRegistry.items[outId]?.name ?: ""} x$outCnt", cx + ico + 20f, cy + rowH - 12f)
+            // Цена иконкой снизу
+            val mini = min(rowH * 0.36f, 26f)
+            BlockRegistry.getIconRegion(cost.first)?.let { spriteBatch.draw(it, cx + ico + 20f, cy + 10f, mini, mini) }
+            fontSmall.color = if (canBuy) Color(0.55f, 0.98f, 0.65f, 1f) else Color(1f, 0.45f, 0.45f, 1f)
+            fontSmall.draw(spriteBatch, "Цена: ${cost.second}", cx + ico + 26f + mini, cy + 10f + mini * 0.85f)
+            fontSmall.color = Color.WHITE
+            spriteBatch.end()
+            val buyW = min(colW * 0.28f, 118f)
+            drawButton(cx + colW - buyW - 8f, cy + 8f, buyW, rowH - 16f, "КУПИТЬ", green = canBuy, centered = true) {
                 if (canBuy && player.takeItem(cost.first, cost.second)) {
                     player.addItem(outId, outCnt); SoundFx.play("craft", 0.65f); showToast("Куплено!")
                 }
@@ -2211,6 +2611,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             }
             // Компактная кнопка «КОПАТЬ ВНИЗ» появляется ТОЛЬКО когда в руках Кирка — 1 тап роет ступеньку вглубь!
             val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
+            if (heldDef != null && !heldDef.isItem) {
+                val bmLbl = when (buildMode) { 0 -> "РЕЖ: ПОЛ"; 2 -> "РЕЖ: КРЫША"; else -> "РЕЖ: СТЕНА" }
+                val bmW = max(142f, slotSz * 2.4f)
+                val bmX = min(W - bmW - 14f, hbX + hbW + 12f)
+                drawButton(bmX, hbY + 6f, bmW, slotSz - 4f, bmLbl, blue = true, centered = true) {
+                    buildMode = (buildMode + 1) % 3
+                    ghostTarget = null
+                    showToast(when (buildMode) { 0 -> "Режим стройки: ПОЛ"; 2 -> "Режим стройки: КРЫША"; else -> "Режим стройки: СТЕНА (за стенами тоже работает!)" })
+                }
+            }
             if (heldDef?.toolType == "pick") {
                 val digW = max(138f, slotSz * 2.3f)
                 val digX = min(W - digW - 14f, hbX + hbW + 12f)
@@ -2236,20 +2646,42 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun renderCampfireScreen(W: Float, H: Float) {
-        drawPanel(W * 0.14f, H * 0.12f, W * 0.72f, H * 0.76f)
+        val px = W * 0.08f; val py = H * 0.07f; val pw = W * 0.84f; val ph = H * 0.86f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.12f
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        font.draw(spriteBatch, "КОСТЁР — ГОТОВКА И ОТВАРЫ", W * 0.17f, H * 0.83f)
-        fontSmall.draw(spriteBatch, "Тепло восстановлено! Выберите отвар или блюдо:", W * 0.17f, H * 0.75f)
+        font.draw(spriteBatch, "КОСТЁР — ГОТОВКА И ОТВАРЫ", px + 22f, py + ph - topH * 0.25f)
         spriteBatch.end()
-        drawButton(W * 0.73f, H * 0.79f, 110f, 42f, "Закрыть", centered = true) { screen = UiScreen.PLAYING }
-        var y = H * 0.62f
-        for (rec in BlockRegistry.recipes.filter { it.campfireBrew }) {
+        drawButton(px + pw - topH * 1.15f - 12f, py + ph - topH - 6f, topH * 1.1f, topH * 0.86f, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
+
+        // Левая декоративная карточка с анимированным костром!
+        val leftW = pw * 0.24f
+        drawPanel(px + 18f, py + 18f, leftW, ph - topH - 36f, badge = true)
+        val cfFrame = 11 + ((elapsed * 5f).toInt() and 1)
+        val cfSz = min(leftW * 0.72f, 110f)
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        spriteBatch.draw(SpriteArt.props[cfFrame], px + 18f + (leftW - cfSz) * 0.5f, py + ph * 0.42f, cfSz, cfSz)
+        fontSmall.draw(spriteBatch, "Тепло: 100%", px + 30f, py + ph * 0.34f)
+        fontSmall.draw(spriteBatch, "HP: ${player.hp.toInt()}/${player.maxHp.toInt()}", px + 30f, py + ph * 0.26f)
+        spriteBatch.end()
+
+        // Правая колонка: визуальные карточки блюд и отваров с иконками!
+        val listX = px + leftW + 30f; val listW = pw - leftW - 48f
+        val cfRecs = BlockRegistry.recipes.filter { it.campfireBrew }
+        val cardH = ((ph - topH - 36f) / max(1, min(6, cfRecs.size))) - 6f
+        cfRecs.take(6).forEachIndexed { idx, rec ->
             val can = player.creative || rec.req.all { (id, cnt) -> player.countItem(id) >= cnt }
-            drawButton(W * 0.17f, y, W * 0.66f, 48f, "${BlockRegistry.items[rec.outId]?.name} x${rec.outCount} — ${rec.desc}", green = can) {
-                if (can) { rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }; player.addItem(rec.outId, rec.outCount); SoundFx.play("craft", 0.65f); showToast("Сварено: ${BlockRegistry.items[rec.outId]?.name}!") }
+            val cy = py + ph - topH - 18f - (idx + 1) * (cardH + 6f) + 6f
+            drawRecipeCard(listX, cy, listW, cardH, rec, can) {
+                if (can) {
+                    rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }
+                    player.addItem(rec.outId, rec.outCount)
+                    SoundFx.play("craft", 0.65f); showToast("Приготовлено: ${BlockRegistry.items[rec.outId]?.name}!")
+                }
             }
-            y -= 56f
         }
     }
 
@@ -2274,29 +2706,78 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun renderAnvilScreen(W: Float, H: Float) {
-        drawPanel(W * 0.14f, H * 0.14f, W * 0.72f, H * 0.72f)
+        val px = W * 0.08f; val py = H * 0.09f; val pw = W * 0.84f; val ph = H * 0.82f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.13f
+
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        font.draw(spriteBatch, "НАКОВАЛЬНЯ — ЗАТОЧКА ОРУЖИЯ И КИРОК", W * 0.17f, H * 0.81f)
-        fontSmall.draw(spriteBatch, "Уровень оружия: +${player.weaponUpgradeLvl}/5 (+${player.weaponUpgradeLvl * 2} урона) | Уровень кирок: +${player.toolUpgradeLvl}/5 (+${player.toolUpgradeLvl * 18}% скорости)", W * 0.17f, H * 0.73f)
+        font.draw(spriteBatch, "НАКОВАЛЬНЯ — КУЗНИЦА", px + 22f, py + ph - topH * 0.28f)
         spriteBatch.end()
-        drawButton(W * 0.73f, H * 0.77f, 110f, 42f, "Закрыть", centered = true) { screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - 12f, py + ph - topH - 6f, topH * 1.1f, topH * 0.86f, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
+
+        // Две большие визуальные карточки ковки (Оружие слева, Инструменты справа) — НИКАКИХ наезжающих строк!
+        val cardW = (pw - 52f) * 0.5f; val cardH = ph - topH - 36f
+        val cardY = py + 18f
+
+        fun drawUpgradeCard(cx: Float, title: String, iconId: Int, lvl: Int, bonusTxt: String, cost1: Pair<Int, Int>, cost2: Pair<Int, Int>, canUp: Boolean, onForge: () -> Unit) {
+            drawPanel(cx, cardY, cardW, cardH, badge = true)
+            val ico = min(cardH * 0.26f, 68f)
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            BlockRegistry.getIconRegion(iconId)?.let { spriteBatch.draw(it, cx + (cardW - ico) * 0.5f, cardY + cardH - ico - 16f, ico, ico) }
+            glyphLayout.setText(font, title)
+            font.draw(spriteBatch, title, cx + (cardW - glyphLayout.width) * 0.5f, cardY + cardH - ico - 28f)
+            glyphLayout.setText(fontSmall, bonusTxt)
+            fontSmall.color = Color(0.65f, 0.98f, 0.72f, 1f)
+            fontSmall.draw(spriteBatch, bonusTxt, cx + (cardW - glyphLayout.width) * 0.5f, cardY + cardH - ico - 62f)
+            fontSmall.color = Color.WHITE
+
+            // 5 квадратных кристаллов-индикаторов уровня заточки!
+            val pipSz = min(cardW * 0.11f, 34f); val pipGap = 8f
+            val totalPipW = pipSz * 5f + pipGap * 4f
+            val pipX0 = cx + (cardW - totalPipW) * 0.5f
+            val pipY = cardY + cardH * 0.36f
+            for (i in 0 until 5) {
+                val pxI = pipX0 + i * (pipSz + pipGap)
+                SpriteArt.slotPatch.draw(spriteBatch, pxI, pipY, pipSz, pipSz)
+                if (i < lvl) {
+                    spriteBatch.setColor(1f, 0.84f, 0.24f, 1f)
+                    spriteBatch.draw(SpriteArt.whitePx, pxI + 6f, pipY + 6f, pipSz - 12f, pipSz - 12f)
+                    spriteBatch.color = Color.WHITE
+                }
+            }
+
+            // Иконки цены заточки
+            val mini = 28f
+            val costY = cardY + cardH * 0.22f
+            val costX = cx + cardW * 0.18f
+            BlockRegistry.getIconRegion(cost1.first)?.let { spriteBatch.draw(it, costX, costY, mini, mini) }
+            fontSmall.draw(spriteBatch, "${player.countItem(cost1.first)}/${cost1.second}  или", costX + mini + 6f, costY + 22f)
+            BlockRegistry.getIconRegion(cost2.first)?.let { spriteBatch.draw(it, cx + cardW * 0.56f, costY, mini, mini) }
+            fontSmall.draw(spriteBatch, "${player.countItem(cost2.first)}/${cost2.second}", cx + cardW * 0.56f + mini + 6f, costY + 22f)
+            spriteBatch.end()
+
+            val btnH = max(48f, cardH * 0.16f)
+            drawButton(cx + 18f, cardY + 14f, cardW - 36f, btnH, if (lvl >= 5) "МАКС. УРОВЕНЬ" else "ЗАТОЧИТЬ (+1)", green = canUp, centered = true) { onForge() }
+        }
 
         val canW = player.weaponUpgradeLvl < 5 && (player.creative || player.countItem(142) >= 1 || player.countItem(102) >= 2)
-        drawButton(W * 0.17f, H * 0.54f, W * 0.66f, 54f, "Заточить Оружие (+2 к урону навсегда • Цена: 1 Рубин или 2 Железа)", green = canW, centered = true) {
-            if (!canW) { showToast("Нужен 1 Рубин или 2 Железа (макс. ур. 5)"); return@drawButton }
+        drawUpgradeCard(px + 18f, "ОРУЖИЕ +${player.weaponUpgradeLvl}", 112, player.weaponUpgradeLvl, "Бонус урона: +${player.weaponUpgradeLvl * 2}", 142 to 1, 102 to 2, canW) {
+            if (!canW) { showToast("Нужен 1 Рубин или 2 Железа!"); return@drawUpgradeCard }
             if (player.takeItem(142, 1) || player.takeItem(102, 2)) {
-                player.weaponUpgradeLvl++; showToast("Оружие заточено до +${player.weaponUpgradeLvl}!")
+                player.weaponUpgradeLvl++; SoundFx.play("levelup", 0.75f); showToast("Оружие заточено до +${player.weaponUpgradeLvl}!")
             }
         }
+
         val canT = player.toolUpgradeLvl < 5 && (player.creative || player.countItem(141) >= 1 || player.countItem(104) >= 1)
-        drawButton(W * 0.17f, H * 0.40f, W * 0.66f, 54f, "Усилить Инструменты (+18% к скорости копки • Цена: 1 Аметист или 1 Алмаз)", green = canT, centered = true) {
-            if (!canT) { showToast("Нужен 1 Аметист или 1 Алмаз (макс. ур. 5)"); return@drawButton }
+        drawUpgradeCard(px + 34f + cardW, "КИРКИ +${player.toolUpgradeLvl}", 109, player.toolUpgradeLvl, "Скорость копки: +${player.toolUpgradeLvl * 18}%", 141 to 1, 104 to 1, canT) {
+            if (!canT) { showToast("Нужен 1 Аметист или 1 Алмаз!"); return@drawUpgradeCard }
             if (player.takeItem(141, 1) || player.takeItem(104, 1)) {
-                player.toolUpgradeLvl++; showToast("Инструменты усилены до +${player.toolUpgradeLvl}!")
+                player.toolUpgradeLvl++; SoundFx.play("levelup", 0.75f); showToast("Инструменты усилены до +${player.toolUpgradeLvl}!")
             }
         }
-        drawButton(W * 0.17f, H * 0.25f, W * 0.66f, 48f, "Открыть полный крафт (3x3)", centered = true) { screen = UiScreen.WORKBENCH }
     }
 
     private fun renderPauseMenu(W: Float, H: Float) {
@@ -2319,49 +2800,213 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun renderInventoryScreen(W: Float, H: Float) {
-        drawPanel(W * 0.06f, H * 0.06f, W * 0.88f, H * 0.88f)
-        spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); font.draw(spriteBatch, "ИНВЕНТАРЬ И КАРМАННЫЙ КРАФТ (2x2)", W * 0.08f, H * 0.90f); spriteBatch.end()
-        drawButton(W * 0.81f, H * 0.84f, 110f, 42f, "Закрыть", centered = true) { screen = UiScreen.PLAYING }
-        drawButton(W * 0.65f, H * 0.84f, 165f, 42f, "Сортировать", green = true, centered = true) { player.autoSortBackpack(); showToast("Рюкзак отсортирован!") }
-        if (invSelectedSlot >= 0 && player.slots[invSelectedSlot] != null) {
-            drawButton(W * 0.49f, H * 0.84f, 155f, 42f, "Выбросить 1", centered = true) { dropSlotItem(invSelectedSlot) }
+        val px = W * 0.04f; val py = H * 0.04f; val pw = W * 0.92f; val ph = H * 0.92f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+
+        // Верхняя полоса вкладок и кнопок (адаптивная высота — НИКАКИХ наложений!)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+        drawButton(px + 16f, topY, pw * 0.24f, topH, "СУМКА (54)", green = invTab == 0, centered = true) { invTab = 0 }
+        drawButton(px + 24f + pw * 0.24f, topY, pw * 0.24f, topH, "КРАФТ 2x2", green = invTab == 1, centered = true) { invTab = 1 }
+        drawButton(px + pw - topH * 1.15f - 14f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { invSelectedSlot = -1; screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - pw * 0.16f - 24f, topY, pw * 0.16f, topH, "Сорт.", blue = true, centered = true) {
+            player.autoSortBackpack(); SoundFx.play("pickup", 0.5f); showToast("Рюкзак отсортирован!")
         }
 
-        var ry = H * 0.74f
-        for (rec in BlockRegistry.recipes.filter { it.pocket2x2 }.take(9)) {
-            val can = player.creative || rec.req.all { (id, cnt) -> player.countItem(id) >= cnt }
-            drawButton(W * 0.08f, ry, W * 0.36f, 38f, "${BlockRegistry.items[rec.outId]?.name} x${rec.outCount} (${rec.desc})", green = can) {
-                if (can) { rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }; player.addItem(rec.outId, rec.outCount); SoundFx.play("craft", 0.65f); showToast("Скрафчено!") }
+        val bodyTop = topY - 12f; val bodyH = bodyTop - (py + 14f)
+
+        // ЛЕВАЯ КОЛОНКА: Анимированный Герой + 4 слота Брони + Левая рука + Карточка выбранного предмета!
+        val leftW = pw * 0.30f; val leftX = px + 16f
+        drawPanel(leftX, py + 14f, leftW, bodyH, badge = true)
+
+        val aSlot = min(bodyH * 0.145f, leftW * 0.22f)
+        val armorLabels = arrayOf("Ш", "Б", "П", "Н")
+        for (a in 0 until 4) {
+            val ax = leftX + 12f
+            val ay = bodyTop - 14f - (a + 1) * (aSlot + 6f) + 6f
+            val aItem = if (player.armor[a] > 0) SlotItem(player.armor[a], 1) else null
+            drawInteractiveSlot("armor", a, ax, ay, aSlot, aItem, selected = false)
+            if (aItem == null) drawCenteredText(fontSmall, armorLabels[a], ax, ay, aSlot, aSlot)
+        }
+        // Слот Левой руки справа от героя
+        val ohX = leftX + leftW - aSlot - 12f; val ohY = bodyTop - 14f - aSlot
+        drawInteractiveSlot("offhand", 0, ohX, ohY, aSlot, player.offhand, selected = false)
+        if (player.offhand == null) drawCenteredText(fontSmall, "Л", ohX, ohY, aSlot, aSlot)
+
+        // Живой Герой в центре левой панели
+        val heroW = min(leftW * 0.44f, bodyH * 0.34f); val heroH = heroW * 1.25f
+        val heroFr = when (((elapsed * 4f).toInt() % 4 + 4) % 4) { 1 -> 1; 3 -> 2; else -> 0 }
+        SpriteArt.skinSprites[player.skinId]?.get(heroFr)?.let { reg ->
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            spriteBatch.draw(reg, leftX + (leftW - heroW) * 0.5f, bodyTop - heroH - 22f, heroW, heroH)
+            fontSmall.draw(spriteBatch, "Броня: ${player.getTotalArmor()}", leftX + 14f, py + bodyH * 0.36f)
+            spriteBatch.end()
+        }
+
+        // Карточка выбранного предмета (или подсказка про Drag-and-Drop!)
+        val inspY = py + 22f; val inspH = bodyH * 0.30f
+        val selItem = if (invSelectedSlot in 0 until PlayerState.INV_SIZE) player.slots[invSelectedSlot] else null
+        val selDef = selItem?.let { BlockRegistry.items[it.id] }
+        if (selItem != null && selDef != null) {
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            fontSmall.color = Color(1f, 0.90f, 0.42f, 1f)
+            fontSmall.draw(spriteBatch, selDef.name, leftX + 12f, inspY + inspH - 4f)
+            fontSmall.color = Color.WHITE
+            val statTxt = when {
+                selDef.armorDef > 0 -> "Защита: +${selDef.armorDef}"
+                selDef.weaponStyle.isNotEmpty() || selDef.damage > 4 -> "Урон: ${selDef.damage + player.weaponUpgradeLvl * 2}"
+                selDef.healFood > 0 -> "Еда: +${selDef.healFood}  HP: +${selDef.healHp}"
+                else -> "Перетащите в любой слот"
             }
-            ry -= 44f
+            fontSmall.draw(spriteBatch, statTxt, leftX + 12f, inspY + inspH - 30f)
+            spriteBatch.end()
+            val btnH = max(36f, inspH * 0.36f)
+            val actW = (leftW - 30f) * 0.5f
+            if (selDef.armorSlot >= 0) {
+                drawButton(leftX + 10f, inspY, actW, btnH, "Надеть", green = true, centered = true) {
+                    val prev = player.armor[selDef.armorSlot]
+                    player.armor[selDef.armorSlot] = selItem.id
+                    player.slots[invSelectedSlot] = if (prev > 0) SlotItem(prev, 1) else null
+                    SoundFx.play("pickup", 0.55f); showToast("Надето: ${selDef.name}")
+                }
+            } else {
+                drawButton(leftX + 10f, inspY, actW, btnH, "В руку", blue = true, centered = true) {
+                    val tmp = player.slots[player.selectedSlot]; player.slots[player.selectedSlot] = selItem
+                    player.slots[invSelectedSlot] = tmp; SoundFx.play("pickup", 0.5f)
+                }
+            }
+            drawButton(leftX + 20f + actW, inspY, actW, btnH, "Выброс", red = true, centered = true) { dropSlotItem(invSelectedSlot) }
+        } else {
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            fontSmall.color = Color(0.75f, 0.85f, 0.96f, 1f)
+            fontSmall.draw(spriteBatch, "Зажми и перетащи", leftX + 12f, inspY + inspH * 0.65f)
+            fontSmall.draw(spriteBatch, "вещь в любой слот!", leftX + 12f, inspY + inspH * 0.35f)
+            fontSmall.color = Color.WHITE
+            spriteBatch.end()
         }
 
-        val cell = min(H * 0.115f, W * 0.44f / 9f); val gx = W * 0.47f
-        for (i in 0 until 36) {
-            val sx = gx + (i % 9) * cell; val sy = H * 0.67f - (i / 9) * cell
-            drawSlotBox(sx, sy, cell - 5f, player.slots[i], selected = invSelectedSlot == i)
-            buttons += Pair(Rectangle(sx, sy, cell - 5f, cell - 5f)) {
-                val cur = player.slots[i]; val def = cur?.let { BlockRegistry.items[it.id] }
-                if (def != null && def.armorSlot >= 0 && invSelectedSlot == -1) {
-                    val prev = player.armor[def.armorSlot]; player.armor[def.armorSlot] = cur.id
-                    player.slots[i] = if (prev > 0) SlotItem(prev, 1) else null; showToast("Надето: ${def.name}")
-                } else if (invSelectedSlot == -1) invSelectedSlot = i
-                else { val tmp = player.slots[invSelectedSlot]; player.slots[invSelectedSlot] = player.slots[i]; player.slots[i] = tmp; invSelectedSlot = -1 }
+        // ПРАВАЯ ЧАСТЬ: 54-СЛОТОВЫЙ БОЛЬШОЙ ИНВЕНТАРЬ (6 рядов x 9 слотов) ИЛИ ВИЗУАЛЬНЫЙ КРАФТ 2x2!
+        val rightX = leftX + leftW + 14f; val rightW = pw - leftW - 46f
+        if (invTab == 0) {
+            val cell = min(rightW / 9f, (bodyH - 18f) / 6f)
+            val gridW = cell * 9f
+            val gx0 = rightX + (rightW - gridW) * 0.5f
+            // 5 рядов сумки сверху (индексы 9..53) + 1 нижний золотой ряд Хотбара (индексы 0..8)!
+            for (row in 0 until 5) {
+                val sy = bodyTop - (row + 1) * cell
+                for (col in 0 until 9) {
+                    val idx = 9 + row * 9 + col
+                    val sx = gx0 + col * cell
+                    drawInteractiveSlot("inv", idx, sx + 2f, sy + 2f, cell - 4f, player.slots[idx], selected = invSelectedSlot == idx)
+                }
+            }
+            // Нижний ряд — Хотбар (0..8), визуально отделён зазором и золотой рамкой
+            val hbY = bodyTop - 6f * cell - 10f
+            for (col in 0 until 9) {
+                val sx = gx0 + col * cell
+                drawInteractiveSlot("inv", col, sx + 2f, hbY + 2f, cell - 4f, player.slots[col], selected = invSelectedSlot == col || col == player.selectedSlot)
+            }
+        } else {
+            val pocketRecs = BlockRegistry.recipes.filter { it.pocket2x2 }.take(6)
+            val cardH = (bodyH / max(1, pocketRecs.size)) - 6f
+            pocketRecs.forEachIndexed { idx, rec ->
+                val can = player.creative || rec.req.all { (id, cnt) -> player.countItem(id) >= cnt }
+                val cy = bodyTop - (idx + 1) * (cardH + 6f) + 6f
+                drawRecipeCard(rightX, cy, rightW, cardH, rec, can) {
+                    if (can) {
+                        rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }
+                        player.addItem(rec.outId, rec.outCount)
+                        SoundFx.play("craft", 0.65f); showToast("Скрафчено: ${BlockRegistry.items[rec.outId]?.name}!")
+                    }
+                }
             }
         }
     }
 
     private fun renderWorkbenchScreen(W: Float, H: Float) {
-        drawPanel(W * 0.06f, H * 0.06f, W * 0.88f, H * 0.88f)
+        val px = W * 0.05f; val py = H * 0.05f; val pw = W * 0.90f; val ph = H * 0.90f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+
         spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); font.draw(spriteBatch, "ВЕРСТАК — ПОЛНЫЙ КРАФТ (3x3)", W * 0.08f, H * 0.90f); spriteBatch.end()
-        drawButton(W * 0.81f, H * 0.84f, 110f, 42f, "Закрыть", centered = true) { screen = UiScreen.PLAYING }
-        val bw = W * 0.41f
-        BlockRegistry.recipes.filter { !it.campfireBrew }.take(18).forEachIndexed { idx, rec ->
+        spriteBatch.begin(); font.draw(spriteBatch, "ВЕРСТАК — ВИЗУАЛЬНЫЙ КРАФТ", px + 20f, topY + topH * 0.72f); spriteBatch.end()
+        drawButton(px + pw - topH * 1.15f - 14f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { screen = UiScreen.PLAYING }
+
+        val allRecs = BlockRegistry.recipes.filter { !it.campfireBrew }
+        val perPage = 20 // 5 cols x 4 rows of visual icon tiles!
+        val totalPages = max(1, (allRecs.size + perPage - 1) / perPage)
+        wbPage = wbPage.coerceIn(0, totalPages - 1)
+        wbSelectedIdx = wbSelectedIdx.coerceIn(0, max(0, allRecs.size - 1))
+
+        val bodyTop = topY - 12f; val bodyH = bodyTop - (py + 16f)
+        val leftW = pw * 0.50f; val leftX = px + 16f
+        val pageBarH = 44f
+        val gridH = bodyH - pageBarH - 10f
+        val cell = min(leftW / 5f, gridH / 4f)
+        val gx0 = leftX + (leftW - cell * 5f) * 0.5f
+
+        val startIdx = wbPage * perPage
+        for (i in 0 until perPage) {
+            val rIdx = startIdx + i
+            if (rIdx >= allRecs.size) break
+            val rec = allRecs[rIdx]
             val can = player.creative || rec.req.all { (id, cnt) -> player.countItem(id) >= cnt }
-            drawButton(W * 0.08f + (idx % 2) * (bw + 14f), H * 0.75f - (idx / 2) * 43f, bw, 38f, "${BlockRegistry.items[rec.outId]?.name} x${rec.outCount} — ${rec.desc}", green = can) {
-                if (can) { rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }; player.addItem(rec.outId, rec.outCount); SoundFx.play("craft", 0.65f); showToast("Создано!") }
+            val sx = gx0 + (i % 5) * cell
+            val sy = bodyTop - (i / 5 + 1) * cell
+            drawSlotBox(sx + 3f, sy + 3f, cell - 6f, SlotItem(rec.outId, rec.outCount), selected = rIdx == wbSelectedIdx)
+            if (can) {
+                spriteBatch.projectionMatrix = camUI.combined
+                spriteBatch.begin()
+                spriteBatch.setColor(0.25f, 0.95f, 0.45f, 0.95f)
+                spriteBatch.draw(SpriteArt.whitePx, sx + 7f, sy + cell - 13f, 8f, 8f)
+                spriteBatch.color = Color.WHITE
+                spriteBatch.end()
+            }
+            buttons += Pair(Rectangle(sx + 3f, sy + 3f, cell - 6f, cell - 6f)) { wbSelectedIdx = rIdx; SoundFx.play("mine", 0.25f) }
+        }
+        drawButton(leftX, py + 16f, leftW * 0.34f, pageBarH, "< НАЗАД", blue = true, centered = true) { if (wbPage > 0) wbPage-- }
+        drawCenteredText(fontSmall, "Стр. ${wbPage + 1}/$totalPages", leftX + leftW * 0.35f, py + 16f, leftW * 0.30f, pageBarH)
+        drawButton(leftX + leftW * 0.66f, py + 16f, leftW * 0.34f, pageBarH, "ДАЛЕЕ >", blue = true, centered = true) { if (wbPage < totalPages - 1) wbPage++ }
+
+        // Правая карточка: крупная иконка результата + визуальные слоты ингредиентов + кнопка СКРАФТИТЬ!
+        val rightX = leftX + leftW + 18f; val rightW = pw - leftW - 50f
+        drawPanel(rightX, py + 16f, rightW, bodyH, badge = true)
+        if (allRecs.isNotEmpty()) {
+            val rec = allRecs[wbSelectedIdx]
+            val can = player.creative || rec.req.all { (id, cnt) -> player.countItem(id) >= cnt }
+            val bigIco = min(bodyH * 0.28f, 84f)
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            SpriteArt.slotSelectedPatch.draw(spriteBatch, rightX + (rightW - bigIco) * 0.5f, bodyTop - bigIco - 18f, bigIco, bigIco)
+            BlockRegistry.getIconRegion(rec.outId)?.let {
+                spriteBatch.draw(it, rightX + (rightW - bigIco) * 0.5f + 10f, bodyTop - bigIco - 8f, bigIco - 20f, bigIco - 20f)
+            }
+            val nm = "${BlockRegistry.items[rec.outId]?.name ?: ""} x${rec.outCount}"
+            glyphLayout.setText(font, nm)
+            font.draw(spriteBatch, nm, rightX + (rightW - glyphLayout.width) * 0.5f, bodyTop - bigIco - 30f)
+            fontSmall.draw(spriteBatch, "Ингредиенты:", rightX + 20f, bodyTop - bigIco - 72f)
+            var iy = bodyTop - bigIco - 108f
+            for ((reqId, reqCnt) in rec.req) {
+                val have = player.countItem(reqId)
+                BlockRegistry.getIconRegion(reqId)?.let { spriteBatch.draw(it, rightX + 20f, iy - 12f, 34f, 34f) }
+                fontSmall.color = if (player.creative || have >= reqCnt) Color(0.55f, 1f, 0.64f, 1f) else Color(1f, 0.45f, 0.45f, 1f)
+                fontSmall.draw(spriteBatch, "${BlockRegistry.items[reqId]?.name ?: ""}: $have / $reqCnt", rightX + 62f, iy + 14f)
+                iy -= 42f
+            }
+            fontSmall.color = Color.WHITE
+            spriteBatch.end()
+
+            val btnH = max(52f, bodyH * 0.16f)
+            drawButton(rightX + 20f, py + 30f, rightW - 40f, btnH, "СКРАФТИТЬ x${rec.outCount}", green = can, centered = true) {
+                if (can) {
+                    rec.req.forEach { (id, cnt) -> player.takeItem(id, cnt) }
+                    player.addItem(rec.outId, rec.outCount)
+                    SoundFx.play("craft", 0.7f); showToast("Создано: ${BlockRegistry.items[rec.outId]?.name}!")
+                } else showToast("Не хватает ресурсов!")
             }
         }
     }
@@ -2369,18 +3014,52 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private fun renderFurnaceScreen(W: Float, H: Float) {
         val pos = openFurnacePos ?: return
         val f = world.getFurnace(pos.first, pos.second, pos.third)
-        drawPanel(W * 0.12f, H * 0.12f, W * 0.76f, H * 0.76f)
+        val px = W * 0.08f; val py = H * 0.05f; val pw = W * 0.84f; val ph = H * 0.90f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin(); font.draw(spriteBatch, "ПЕЧЬ — ПЕРЕПЛАВКА", px + 20f, topY + topH * 0.72f); spriteBatch.end()
+        drawButton(px + pw - topH * 1.15f - 14f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { openFurnacePos = null; screen = UiScreen.PLAYING }
+
+        // Верхняя часть: визуальная станция печи (Сырьё + Огонь + Топливо  ==>  Готово!)
+        val stH = ph * 0.44f; val stY = topY - stH - 8f
+        drawPanel(px + 18f, stY, pw - 36f, stH, badge = true)
+        val slSz = min(stH * 0.34f, 68f)
+        val inX = px + pw * 0.24f; val inY = stY + stH - slSz - 16f
+        val flY = stY + 16f
+        val outX = px + pw * 0.66f; val outY = stY + (stH - slSz) * 0.5f
+
+        drawInteractiveSlot("furnace_in", 0, inX, inY, slSz, f.input)
+        drawInteractiveSlot("furnace_fuel", 0, inX, flY, slSz, f.fuel)
+        drawInteractiveSlot("furnace_out", 0, outX, outY, slSz, f.output, selected = f.output != null)
+
+        // Визуальный индикатор огня и прогресс-стрелка!
+        val burnFrac = (f.burn / max(1f, f.maxBurn)).coerceIn(0f, 1f)
+        val cookFrac = (f.cook / 100f).coerceIn(0f, 1f)
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        font.draw(spriteBatch, "ПЕЧЬ — ПЕРЕПЛАВКА С ТОПЛИВОМ", W * 0.15f, H * 0.83f)
-        fontSmall.draw(spriteBatch, "Огонь: ${((f.burn / max(1f, f.maxBurn)) * 100).toInt()}%   Прогресс: ${f.cook.toInt()}%", W * 0.15f, H * 0.74f)
+        fontSmall.draw(spriteBatch, "Сырьё", inX - 78f, inY + slSz * 0.65f)
+        fontSmall.draw(spriteBatch, "Топливо", inX - 96f, flY + slSz * 0.65f)
+        fontSmall.draw(spriteBatch, "Готово", outX + slSz + 12f, outY + slSz * 0.65f)
+        // Полоска огня между Сырьём и Топливом
+        val fireY = flY + slSz + 8f; val fireH = max(12f, inY - fireY - 8f)
+        SpriteArt.barFramePatch.draw(spriteBatch, inX, fireY, slSz, fireH)
+        if (burnFrac > 0.01f) {
+            spriteBatch.setColor(1f, 0.55f, 0.14f, 1f)
+            spriteBatch.draw(SpriteArt.whitePx, inX + 4f, fireY + 4f, (slSz - 8f) * burnFrac, fireH - 8f)
+        }
+        // Полоска прогресса переплавки между входом и выходом
+        val arrX = inX + slSz + 24f; val arrW = outX - arrX - 24f; val arrY = outY + slSz * 0.35f; val arrH = 22f
+        SpriteArt.barFramePatch.draw(spriteBatch, arrX, arrY, arrW, arrH)
+        spriteBatch.setColor(0.28f, 0.92f, 0.50f, 1f)
+        spriteBatch.draw(SpriteArt.whitePx, arrX + 4f, arrY + 4f, (arrW - 8f) * cookFrac, arrH - 8f)
+        spriteBatch.color = Color.WHITE
         spriteBatch.end()
-        drawButton(W * 0.75f, H * 0.78f, 110f, 42f, "Закрыть", centered = true) { openFurnacePos = null; screen = UiScreen.PLAYING }
-        drawButton(W * 0.16f, H * 0.56f, W * 0.30f, 50f, "Сырьё: ${f.input?.let { "${BlockRegistry.items[it.id]?.name} x${it.count}" } ?: "Пусто"}") { f.input?.let { player.addItem(it.id, it.count); f.input = null } }
-        drawButton(W * 0.16f, H * 0.44f, W * 0.30f, 50f, "Топливо: ${f.fuel?.let { "${BlockRegistry.items[it.id]?.name} x${it.count}" } ?: "Пусто"}") { f.fuel?.let { player.addItem(it.id, it.count); f.fuel = null } }
-        drawButton(W * 0.52f, H * 0.49f, W * 0.30f, 58f, "Готово: ${f.output?.let { "${BlockRegistry.items[it.id]?.name} x${it.count}" } ?: "Пусто"}", green = f.output != null) { f.output?.let { player.addItem(it.id, it.count); f.output = null } }
-        drawButton(W * 0.16f, H * 0.22f, W * 0.66f, 50f, "Загрузить руду и уголь из рюкзака", green = true, centered = true) {
-            for (i in 0 until 36) {
+
+        drawButton(px + pw - 210f, stY + 12f, 178f, 42f, "Авто-загрузка", green = true, centered = true) {
+            for (i in 0 until PlayerState.INV_SIZE) {
                 val s = player.slots[i] ?: continue
                 if (BlockRegistry.smeltMap.containsKey(s.id) && (f.input == null || f.input!!.id == s.id)) {
                     f.input = if (f.input == null) SlotItem(s.id, s.count) else SlotItem(s.id, f.input!!.count + s.count); player.slots[i] = null
@@ -2388,25 +3067,52 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     f.fuel = if (f.fuel == null) SlotItem(s.id, s.count) else SlotItem(s.id, f.fuel!!.count + s.count); player.slots[i] = null
                 }
             }
+            SoundFx.play("pickup", 0.5f)
+        }
+
+        // Нижняя часть: быстрая сетка рюкзака (3x9 = 27 слотов, перетаскивай руду/мясо/уголь прямо в печь!)
+        val bagH = stY - (py + 22f)
+        val cell = min((pw - 40f) / 9f, bagH / 3f)
+        val gx0 = px + (pw - cell * 9f) * 0.5f
+        for (i in 0 until 27) {
+            val sx = gx0 + (i % 9) * cell
+            val sy = stY - 10f - (i / 9 + 1) * cell
+            drawInteractiveSlot("inv", i, sx + 2f, sy + 2f, cell - 4f, player.slots[i])
         }
     }
 
     private fun renderChestScreen(W: Float, H: Float) {
         val pos = openChestPos ?: return
         val items = world.getChest(pos.first, pos.second, pos.third)
-        drawPanel(W * 0.08f, H * 0.08f, W * 0.84f, H * 0.84f)
+        val px = W * 0.05f; val py = H * 0.04f; val pw = W * 0.90f; val ph = H * 0.92f
+        activePanelBounds.set(px, py, pw, ph)
+        drawPanel(px, py, pw, ph)
+        val topH = ph * 0.10f; val topY = py + ph - topH - 8f
+
         spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); font.draw(spriteBatch, "СУНДУК / БОЧКА (27 СЛОТОВ)", W * 0.11f, H * 0.87f); spriteBatch.end()
-        drawButton(W * 0.79f, H * 0.82f, 110f, 42f, "Закрыть", centered = true) { openChestPos = null; screen = UiScreen.PLAYING }
-        val cell = min(H * 0.13f, W * 0.76f / 9f); val gx = (W - cell * 9f) / 2f
-        for (i in 0 until 27) {
-            val sx = gx + (i % 9) * cell; val sy = H * 0.65f - (i / 9) * cell; val s = items[i]
-            drawSlotBox(sx, sy, cell - 5f, s, selected = false)
-            buttons += Pair(Rectangle(sx, sy, cell - 5f, cell - 5f)) { if (s != null && player.addItem(s.id, s.count)) { items[i] = null; netMp.broadcastChest(pos.first, pos.second, pos.third, items) } }
+        spriteBatch.begin(); font.draw(spriteBatch, "СУНДУК — ПЕРЕТАСКИВАНИЕ И БЫСТРЫЙ ТАП", px + 18f, topY + topH * 0.72f); spriteBatch.end()
+        drawButton(px + pw - topH * 1.15f - 12f, topY, topH * 1.1f, topH, "X", red = true, centered = true) { openChestPos = null; screen = UiScreen.PLAYING }
+        drawButton(px + pw - topH * 1.15f - pw * 0.22f - 22f, topY, pw * 0.22f, topH, "Сумка: стр.${chestBagPage + 1}/2", blue = true, centered = true) {
+            chestBagPage = 1 - chestBagPage
         }
-        drawButton(gx, H * 0.14f, cell * 9f, 48f, "Положить текущий предмет из руки в сундук", green = true, centered = true) {
-            val held = player.slots[player.selectedSlot]; val empty = items.indexOfFirst { it == null }
-            if (held != null && empty >= 0) { items[empty] = SlotItem(held.id, held.count); player.slots[player.selectedSlot] = null; netMp.broadcastChest(pos.first, pos.second, pos.third, items) }
+
+        // Двойная сетка Drag-and-Drop: сверху 27 слотов Сундука, снизу 27 слотов Инвентаря!
+        val availH = topY - (py + 24f)
+        val cell = min((pw - 36f) / 9f, (availH - 18f) / 6f)
+        val gx0 = px + (pw - cell * 9f) * 0.5f
+
+        for (i in 0 until 27) {
+            val sx = gx0 + (i % 9) * cell
+            val sy = topY - 8f - (i / 9 + 1) * cell
+            drawInteractiveSlot("chest", i, sx + 2f, sy + 2f, cell - 4f, items[i])
+        }
+        val bagTop = topY - 8f - cell * 3f - 14f
+        val bagOffset = chestBagPage * 27
+        for (i in 0 until 27) {
+            val invIdx = bagOffset + i
+            val sx = gx0 + (i % 9) * cell
+            val sy = bagTop - (i / 9 + 1) * cell
+            drawInteractiveSlot("inv", invIdx, sx + 2f, sy + 2f, cell - 4f, player.slots[invIdx], selected = invIdx == player.selectedSlot)
         }
     }
 
@@ -2552,31 +3258,50 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 val ux = screenX.toFloat(); val uy = (Gdx.graphics.height - screenY).toFloat()
                 ptrPos[pointer] = Pair(ux, uy)
 
-                // 0. Проверяем UI-кнопки (меню, пауза, «...», СЛОЙ)
+                // 0. Проверяем UI-кнопки
                 for (i in buttons.size - 1 downTo 0) {
                     val (rect, act) = buttons[i]
                     if (rect.contains(ux, uy)) { act(); return true }
                 }
+
+                // 0.5 Drag-and-Drop слотов в Инвентаре, Сундуке и Печи!
+                if (screen in setOf(UiScreen.INVENTORY, UiScreen.CHEST, UiScreen.FURNACE)) {
+                    for (i in uiSlots.size - 1 downTo 0) {
+                        val sl = uiSlots[i]
+                        if (sl.rect.contains(ux, uy)) {
+                            dragPtr = pointer
+                            dragStartX = ux; dragStartY = uy
+                            dragCurX = ux; dragCurY = uy
+                            dragActive = false
+                            dragFromZone = sl.zone; dragFromIdx = sl.index
+                            dragPreviewItem = getSlotRef(sl.zone, sl.index)
+                            return true
+                        }
+                    }
+                    return false
+                }
+
                 if (screen != UiScreen.PLAYING) return false
 
-                // 1. Тап по слоту Левой руки (Off-hand) -> мгновенный обмен рук!
+                // 1. Тап по слоту Левой руки
                 if (offhandSlotRect.contains(ux, uy)) {
                     player.swapWithOffhand()
                     showToast("Левая рука: ${BlockRegistry.items[player.offhand?.id ?: 0]?.name ?: "Пусто"}")
                     return true
                 }
 
-                // 2. Тап или свайп вверх по слоту Хотбара (выбор слота / выброс свайпом вверх!)
+                // 2. Хотбар
                 for (i in 0 until 9) {
                     if (hotbarSlotRects[i].contains(ux, uy)) {
                         player.selectedSlot = i
+                        ghostTarget = null
                         player.slots[i]?.let { showToast(BlockRegistry.items[it.id]?.name ?: "") }
                         hotbarSwipePtr = pointer; hotbarSwipeSlot = i; hotbarSwipeStartY = uy
                         return true
                     }
                 }
 
-                // 3. Левый плавающий стик (левые 36% экрана)
+                // 3. Левый плавающий стик
                 if (joyPtr == -1 && ux < Gdx.graphics.width * 0.36f) {
                     joyPtr = pointer
                     joyCenterX = ux.coerceIn(joyRadius + 8f, Gdx.graphics.width * 0.32f)
@@ -2585,23 +3310,29 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     return true
                 }
 
-                // 4. Второй палец на мире -> Пинч-зум двумя пальцами!
+                // 4. Пинч-зум двумя пальцами
                 if (worldTouchPtr != -1 && pinchPtr2 == -1) {
                     pinchPtr2 = pointer
                     val p1 = ptrPos[worldTouchPtr] ?: Pair(worldTouchStartX, Gdx.graphics.height - worldTouchStartY)
                     pinchStartDist = max(20f, hypot((p1.first - ux).toDouble(), (p1.second - uy).toDouble()).toFloat())
                     pinchStartZoom = cameraZoom
-                    holdingMine = false; worldTouchHeldActed = true
+                    holdingMine = false; isDragBuilding = false; worldTouchHeldActed = true
                     return true
                 }
 
-                // 5. Начало тапа / удержания по миру!
+                // 5. Начало тапа / удержания / свайп-стройки по миру!
                 if (worldTouchPtr == -1) {
                     worldTouchPtr = pointer
                     worldTouchDownTime = elapsed
                     worldTouchStartX = screenX.toFloat()
                     worldTouchStartY = screenY.toFloat()
                     worldTouchHeldActed = false
+                    isDragBuilding = false
+                    dragBuildLastX = Int.MIN_VALUE
+                    val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
+                    if (heldDef != null && !heldDef.isItem) {
+                        ghostTarget = pickBuildCellOnPlane(screenX.toFloat(), screenY.toFloat())
+                    }
                     return true
                 }
                 return true
@@ -2618,13 +3349,20 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             override fun touchDragged(screenX: Int, screenY: Int, pointer: Int): Boolean {
                 val ux = screenX.toFloat(); val uy = (Gdx.graphics.height - screenY).toFloat()
                 ptrPos[pointer] = Pair(ux, uy)
-                if (screen != UiScreen.PLAYING) return false
 
+                // Перетаскивание предмета в инвентаре / сундуке / печи!
+                if (pointer == dragPtr && dragPreviewItem != null) {
+                    dragCurX = ux; dragCurY = uy
+                    if (!dragActive && hypot((ux - dragStartX).toDouble(), (uy - dragStartY).toDouble()) > 16.0) {
+                        dragActive = true
+                    }
+                    return true
+                }
+
+                if (screen != UiScreen.PLAYING) return false
                 if (pointer == joyPtr) { updateJoystick(ux, uy); return true }
                 if (pointer == hotbarSwipePtr && hotbarSwipeSlot >= 0 && (uy - hotbarSwipeStartY) > 54f) {
-                    dropSlotItem(hotbarSwipeSlot)
-                    hotbarSwipeSlot = -1
-                    return true
+                    dropSlotItem(hotbarSwipeSlot); hotbarSwipeSlot = -1; return true
                 }
                 if (pinchPtr2 != -1 && (pointer == worldTouchPtr || pointer == pinchPtr2)) {
                     val p1 = ptrPos[worldTouchPtr]; val p2 = ptrPos[pinchPtr2]
@@ -2634,18 +3372,59 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     }
                     return true
                 }
+
+                // СВАЙП-СТРОЙКА (Drag-to-Build): веди пальцем с блоком в руке -> строй ровную стену / пол / крышу!
+                if (pointer == worldTouchPtr && pinchPtr2 == -1) {
+                    val heldDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
+                    if (heldDef != null && !heldDef.isItem) {
+                        val moved = hypot((screenX - worldTouchStartX).toDouble(), (screenY - worldTouchStartY).toDouble())
+                        val cell = pickBuildCellOnPlane(screenX.toFloat(), screenY.toFloat())
+                        ghostTarget = cell
+                        if (moved > 28.0 && cell != null) {
+                            isDragBuilding = true
+                            worldTouchHeldActed = true
+                            holdingMine = false
+                            if (cell.gx != dragBuildLastX || cell.gy != dragBuildLastY || cell.gz != dragBuildLastZ) {
+                                if (tryPlaceHeldBlockAt(cell.gx, cell.gy, cell.gz)) {
+                                    dragBuildLastX = cell.gx; dragBuildLastY = cell.gy; dragBuildLastZ = cell.gz
+                                }
+                            }
+                            return true
+                        }
+                    }
+                }
                 return false
             }
 
             override fun touchUp(screenX: Int, screenY: Int, pointer: Int, button: Int): Boolean {
+                val ux = screenX.toFloat(); val uy = (Gdx.graphics.height - screenY).toFloat()
                 ptrPos.remove(pointer)
+
+                // Завершение Drag-and-Drop или короткого тапа по слоту!
+                if (pointer == dragPtr) {
+                    val wasDrag = dragActive
+                    val fz = dragFromZone; val fi = dragFromIdx; val item = dragPreviewItem
+                    dragPtr = -1; dragActive = false; dragPreviewItem = null; dragFromZone = ""; dragFromIdx = -1
+                    if (wasDrag && item != null) {
+                        val hit = uiSlots.lastOrNull { it.rect.contains(ux, uy) }
+                        if (hit != null) {
+                            handleSlotDrop(fz, fi, hit.zone, hit.index)
+                        } else if (!activePanelBounds.contains(ux, uy) && fz == "inv") {
+                            dropSlotItem(fi) // Вытащил за пределы окна -> выбросил 1 шт.!
+                        }
+                    } else if (fz.isNotEmpty()) {
+                        handleSlotQuickTap(fz, fi)
+                    }
+                    return true
+                }
+
                 if (pointer == joyPtr) { joyPtr = -1; stickDx = 0f; stickDy = 0f; return true }
                 if (pointer == hotbarSwipePtr) { hotbarSwipePtr = -1; hotbarSwipeSlot = -1; return true }
                 if (pointer == pinchPtr2) { pinchPtr2 = -1; return true }
 
                 if (pointer == worldTouchPtr) {
-                    val wasShortTap = !worldTouchHeldActed && (elapsed - worldTouchDownTime) < 0.22f
-                    worldTouchPtr = -1; holdingMine = false; mineProgress = 0f
+                    val wasShortTap = !worldTouchHeldActed && !isDragBuilding && (elapsed - worldTouchDownTime) < 0.24f
+                    worldTouchPtr = -1; holdingMine = false; mineProgress = 0f; isDragBuilding = false
                     if (wasShortTap && screen == UiScreen.PLAYING) {
                         handleWorldTap(screenX.toFloat(), screenY.toFloat())
                     }
@@ -2655,18 +3434,16 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             }
 
             private fun handleWorldTap(sx: Float, sy: Float) {
-                // Если спим на кровати -> тап поднимает игрока!
                 if (fishingActive) { resolveFishingCatch(); return }
                 if (player.isSleeping) {
                     player.isSleeping = false; player.sleepElapsed = 0f
-                    showToast("Вы встали с кровати")
-                    return
+                    showToast("Вы встали с кровати"); return
                 }
 
                 tmpVec3.set(sx, sy, 0f); camWorld.unproject(tmpVec3)
                 val hx = isoToScreenX(player.x, player.y); val hy = isoToScreenY(player.x, player.y, player.z) + 22f
 
-                // 1. Тап по самому ГЕРОЮ -> Еда/Отвар/Сердце Леса ИЛИ Рывок/Парирование Щитом!
+                // 1. Тап по герою -> Еда/Отвар или Рывок/Щит
                 if (hypot((hx - tmpVec3.x).toDouble(), (hy - tmpVec3.y).toDouble()) < 44.0) {
                     val held = player.slots[player.selectedSlot]
                     if (held != null && useConsumableOrSpecial(held)) return
@@ -2674,25 +3451,26 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     return
                 }
 
-                // PvP удар по другому игроку (если PvP включено)
+                // 1.5 PvP по другому игроку
                 if (netMp.isConnected && netMp.pvpEnabled) {
                     val tappedPeer = netMp.remotePlayers.values.firstOrNull { rp ->
                         val rx = isoToScreenX(rp.x, rp.y); val ry = isoToScreenY(rp.x, rp.y, rp.z) + 22f
-                        hypot((rx - tmpVec3.x).toDouble(), (ry - tmpVec3.y).toDouble()) < 50.0 && hypot((rp.x - player.x).toDouble(), (rp.y - player.y).toDouble()) < 3.0
+                        hypot((rx - tmpVec3.x).toDouble(), (ry - tmpVec3.y).toDouble()) < 54.0 && hypot((rp.x - player.x).toDouble(), (rp.y - player.y).toDouble()) < 3.2
                     }
                     if (tappedPeer != null) {
                         val hDef = player.slots[player.selectedSlot]?.let { BlockRegistry.items[it.id] }
                         val dmg = ((hDef?.damage ?: 4) + player.weaponUpgradeLvl * 2).toFloat()
-                        player.attackAnim = 1.0f
+                        player.attackAnim = 1.0f; SoundFx.play("hit", 0.6f)
                         netMp.sendPvpHit(tappedPeer.id, dmg)
                         entities.floatingTexts.add(FloatingText(tappedPeer.x, tappedPeer.y, tappedPeer.z + 1.5f, "-${dmg.toInt()}", Color.RED))
                         return
                     }
                 }
+
                 val pick = pickIsoBlock(sx, sy) ?: return
                 targetPick = pick
 
-                // 2. Тап по МОБУ (увеличенный радиус 76px — не промахнёшься!)
+                // 2. Тап по МОБУ / Торговцу
                 val tappedMob = entities.mobs.minByOrNull { m ->
                     val mx = isoToScreenX(m.x, m.y); val my = isoToScreenY(m.x, m.y, m.z) + 22f
                     hypot((mx - tmpVec3.x).toDouble(), (my - tmpVec3.y).toDouble())
@@ -2702,7 +3480,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     if (hypot((mx - tmpVec3.x).toDouble(), (my - tmpVec3.y).toDouble()) < 76.0) {
                         if (tappedMob.type == "trader") { SoundFx.play("chest", 0.6f); screen = UiScreen.TRADER_QUESTS; return }
                         val held = player.slots[player.selectedSlot]
-                        if (tappedMob.type == "wolf" && !tappedMob.tamed && held != null && (held.id == 115 || held.id == 114)) {
+                        if (tappedMob.type == "wolf" && !tappedMob.tamed && held != null && (held.id == 115 || held.id == 114 || held.id == 157)) {
                             if (player.takeItem(held.id, 1)) {
                                 tappedMob.tamed = true; tappedMob.hostile = false; tappedMob.hp = 45f; tappedMob.maxHp = 45f
                                 showToast("Волк приручён! Теперь он защищает вас!"); return
@@ -2715,28 +3493,41 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                             }
                         }
                         if (tappedMob.type in setOf("sheep", "cow", "pig", "chicken", "deer") && held != null && (held.id == 143 || held.id == 113) && tappedMob.breedCd <= 0f) {
-                            if (player.takeItem(held.id, 1)) {
-                                showToast(entities.feedPeacefulMob(tappedMob)); return
-                            }
+                            if (player.takeItem(held.id, 1)) { showToast(entities.feedPeacefulMob(tappedMob)); return }
                         }
                         performAttackOrMine(IsoPick(floor(tappedMob.x).toInt(), floor(tappedMob.y).toInt(), floor(tappedMob.z).toInt(), 0), startContinuousHold = false)
                         return
                     }
                 }
 
-                // 2.5 Умный поиск ближайшего Сундука / Кровати / Печи / Верстака рядом с точкой тапа!
+                // 3. Ближайший интерактивный блок (Сундук / Печь / Верстак / Кровать / Лифт)
                 val nearTapInter = findNearestInteractive(pick.gx + 0.5f, pick.gy + 0.5f, pick.gz, 1.45f)
                 if (nearTapInter != null && hypot((nearTapInter.gx + 0.5f - player.x).toDouble(), (nearTapInter.gy + 0.5f - player.y).toDouble()) <= 4.6) {
                     performInteractOrPlace(nearTapInter)
                     return
                 }
 
-                val def = BlockRegistry.items[pick.id]
+                // 4. Стройка по плоскости (ПОЛ / СТЕНА / КРЫША) — работает даже за стеной!
                 val held = player.slots[player.selectedSlot]
                 val hDef = held?.let { BlockRegistry.items[it.id] }
+                if (hDef != null && !hDef.isItem) {
+                    // Быстрый откат последнего поставленного блока
+                    if ((elapsed - lastPlacedTime) <= 2.2f && pick.gx == lastPlacedX && pick.gy == lastPlacedY && pick.gz == lastPlacedZ && pick.id == lastPlacedId && pick.id > 0) {
+                        setWorldBlock(pick.gx, pick.gy, pick.gz, 0)
+                        if (!player.creative) player.addItem(lastPlacedId, 1)
+                        lastPlacedTime = -10f; SoundFx.play("pickup", 0.55f); showToast("Блок возвращён!"); return
+                    }
+                    val bCell = pickBuildCellOnPlane(sx, sy)
+                    if (bCell != null) {
+                        ghostTarget = bCell
+                        tryPlaceHeldBlockAt(bCell.gx, bCell.gy, bCell.gz)
+                        return
+                    }
+                }
+
+                val def = BlockRegistry.items[pick.id]
                 when {
                     def != null && def.interactive.isNotEmpty() -> performInteractOrPlace(pick)
-                    hDef != null && !hDef.isItem -> performInteractOrPlace(pick)
                     else -> performAttackOrMine(pick, startContinuousHold = false)
                 }
             }

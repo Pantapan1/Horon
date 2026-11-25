@@ -167,14 +167,14 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         try {
             file.parentFile?.mkdirs()
             DataOutputStream(GZIPOutputStream(BufferedOutputStream(FileOutputStream(file)))).use { out ->
-                out.writeInt(54)
+                out.writeInt(63)
                 out.writeInt(seed); out.writeUTF(dimension)
                 out.writeFloat(player.x); out.writeFloat(player.y); out.writeFloat(player.z)
                 out.writeFloat(player.hp); out.writeFloat(player.maxHp); out.writeFloat(player.food)
                 out.writeInt(player.weaponUpgradeLvl); out.writeInt(player.toolUpgradeLvl)
                 out.writeBoolean(player.creative)
                 out.writeInt(entities.dayCount); out.writeInt(entities.seasonLengthDays); out.writeFloat(entities.worldTime)
-                for (i in 0 until 36) { out.writeInt(player.slots[i]?.id ?: 0); out.writeInt(player.slots[i]?.count ?: 0) }
+                for (i in 0 until PlayerState.INV_SIZE) { out.writeInt(player.slots[i]?.id ?: 0); out.writeInt(player.slots[i]?.count ?: 0) }
                 out.writeInt(player.offhand?.id ?: 0); out.writeInt(player.offhand?.count ?: 0)
                 for (i in 0 until 4) out.writeInt(player.armor[i])
                 out.writeInt(modifications.size); for ((k, v) in modifications) { out.writeUTF(k); out.writeInt(v) }
@@ -196,16 +196,18 @@ class WorldIso(var seed: Int, var dimension: String = "overworld") {
         return try {
             DataInputStream(GZIPInputStream(BufferedInputStream(FileInputStream(file)))).use { inp ->
                 val ver = inp.readInt()
-                if (ver != 52 && ver != 54) return false
+                if (ver != 52 && ver != 54 && ver != 63) return false
                 val s = inp.readInt(); val dim = inp.readUTF()
                 player.x = inp.readFloat(); player.y = inp.readFloat(); player.z = inp.readFloat()
                 player.hp = inp.readFloat(); player.maxHp = inp.readFloat(); player.food = inp.readFloat()
                 if (ver >= 54) { player.weaponUpgradeLvl = inp.readInt(); player.toolUpgradeLvl = inp.readInt() }
                 player.creative = inp.readBoolean()
                 entities.dayCount = inp.readInt(); entities.seasonLengthDays = inp.readInt(); entities.worldTime = inp.readFloat()
-                for (i in 0 until 36) {
+                player.slots.fill(null)
+                val slotCnt = if (ver >= 63) PlayerState.INV_SIZE else 36
+                for (i in 0 until slotCnt) {
                     val id = inp.readInt(); val cnt = inp.readInt()
-                    player.slots[i] = if (id > 0 && cnt > 0) SlotItem(id, cnt) else null
+                    if (i < PlayerState.INV_SIZE) player.slots[i] = if (id > 0 && cnt > 0) SlotItem(id, cnt) else null
                 }
                 val ohId = inp.readInt(); val ohCnt = inp.readInt()
                 player.offhand = if (ohId > 0 && ohCnt > 0) SlotItem(ohId, ohCnt) else null
