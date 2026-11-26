@@ -34,7 +34,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 enum class UiScreen {
-    MAIN_MENU, WORLD_SLOTS, PROFILES_FRIENDS, PLAYING, PAUSE, INVENTORY, WORKBENCH, FURNACE, CHEST, CAMPFIRE, WAYSTONES, ANVIL, TRADER_QUESTS, BESTIARY_SKILLS, FULL_MAP, ENCHANTING, ACHIEVEMENTS, GOLEM_BAG, MOD_STUDIO, MOD_CUSTOM_UI, SETTINGS_MODHUB, WARDROBE, MULTIPLAYER, DEATH
+    MAIN_MENU, WORLD_SLOTS, PROFILES_FRIENDS, PLAYING, PAUSE, INVENTORY, WORKBENCH, FURNACE, CHEST, CAMPFIRE, WAYSTONES, ANVIL, TRADER_QUESTS, BESTIARY_SKILLS, FULL_MAP, ENCHANTING, ACHIEVEMENTS, GOLEM_BAG, MOD_STUDIO, MOD_CUSTOM_UI, MOD_SYNC_PROMPT, SETTINGS_MODHUB, WARDROBE, MULTIPLAYER, DEATH
 }
 
 data class IsoPick(val gx: Int, val gy: Int, val gz: Int, val id: Int)
@@ -392,8 +392,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             world.signTexts.clear(); world.signTexts.putAll(signs)
             world.syncModsToRust()
             world.resetDimension(dim, seed)
+            entities.mobs.clear(); entities.drops.clear(); entities.projectiles.clear()
             entities.dayCount = dayCnt; entities.seasonLengthDays = seasLen; entities.worldTime = wTime
             player.x = hx + 1.1f; player.y = hy; player.z = hz; player.isSleeping = false
+            manualLayerOffset = 0; emotePickerOpen = false; lastFogGx = Int.MIN_VALUE; lastFogGy = Int.MIN_VALUE
             camWorld.position.set(isoToScreenX(player.x, player.y), isoToScreenY(player.x, player.y, player.z), 0f)
             screen = UiScreen.PLAYING
             showToast("Мир Хоста синхронизирован! (День $dayCnt)")
@@ -1836,7 +1838,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
         updateOstMusic()
 
-        if (world.worldActive && screen !in setOf(UiScreen.MAIN_MENU, UiScreen.WORLD_SLOTS, UiScreen.PAUSE, UiScreen.DEATH)) {
+        if (world.worldActive && screen !in setOf(UiScreen.MAIN_MENU, UiScreen.WORLD_SLOTS, UiScreen.PAUSE, UiScreen.DEATH, UiScreen.MOD_SYNC_PROMPT)) {
             updateFurnaces(dt)
             updateDecayingLeaves(dt)
             redstone.update(dt, this)
@@ -2791,6 +2793,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 activePanelBounds.set(0f, 0f, W, H)
                 luaMods.emitRenderScreen(activeModScreenId, W, H)
             }
+            UiScreen.MOD_SYNC_PROMPT -> renderModSyncPromptScreen(W, H)
             UiScreen.PLAYING -> renderGameplayHud(W, H)
             UiScreen.PAUSE -> { renderGameplayHud(W, H); renderPauseMenu(W, H) }
             UiScreen.INVENTORY -> renderInventoryScreen(W, H)
@@ -2917,7 +2920,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val hdrH = ph * 0.14f
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        drawFitTextBatch(fontSmall, "Rust Engine v6.12 • Voice API + 30 Чиби", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
+        drawFitTextBatch(fontSmall, "Rust Engine v6.13 • Авто-моды + Голос", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color(1f, 0.90f, 0.48f, 1f)
         drawFitTextBatch(fontSmall, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 18f, py + ph - hdrH * 0.96f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color.WHITE
@@ -4971,6 +4974,73 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         drawCenteredText(fontSmall, "Стр. ${wardrobePage + 1} / $totalPages  (30 героев)", rightX + navW, py + 16f, rightW - navW * 2f, navH)
         drawThemedButton(SpriteArt.oceanBtnBluePatch, rightX + rightW - navW, py + 16f, navW, navH, "ДАЛЕЕ >", centered = true) {
             wardrobePage = (wardrobePage + 1) % totalPages
+        }
+    }
+
+    private fun renderModSyncPromptScreen(W: Float, H: Float) {
+        val px = W * 0.08f; val py = H * 0.07f; val pw = W * 0.84f; val ph = H * 0.86f
+        drawThemedPanel(SpriteArt.oceanPanelPatch, px, py, pw, ph)
+
+        val topH = max(48f, ph * 0.12f); val topY = py + ph - topH - 12f
+        val isDl = netMp.modSyncState == ModSyncState.DOWNLOADING
+        val titleTxt = if (isDl) "ЗАГРУЗКА МОДОВ СЕРВЕРА..." else "СЕРВЕР ИСПОЛЬЗУЕТ МОДЫ (${netMp.missingHostMods.size})"
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        drawFitTextBatch(font, titleTxt, px + 22f, topY, pw - 44f, topH, centered = true)
+        spriteBatch.end()
+
+        val cX = px + 20f; val cW = pw - 40f
+        if (isDl) {
+            val doneB = netMp.modSyncDoneBytes
+            val totB = max(1, netMp.modSyncTotalBytes)
+            val frac = (doneB.toFloat() / totB.toFloat()).coerceIn(0f, 1f)
+            drawThemedPanel(SpriteArt.blueprintSlotPatch, cX, py + ph * 0.34f, cW, ph * 0.42f)
+            drawCenteredText(font, netMp.modSyncStatusText, cX, py + ph * 0.60f, cW, 40f)
+            drawModProgressBar(
+                cX + 24f, py + ph * 0.46f, cW - 48f, 44f, frac, 0x48F088,
+                "${(frac * 100f).toInt()}%  (${doneB / 1024} / ${max(1, totB / 1024)} КБ • Файл ${netMp.modSyncDoneFiles}/${netMp.modSyncTotalFiles})"
+            )
+            drawCenteredText(fontSmall, "Моды сохранятся в вашу папку mods и включатся автоматически!", cX, py + ph * 0.36f, cW, 32f)
+            drawThemedButton(SpriteArt.crimsonBtnPatch, cX + cW * 0.25f, py + 24f, cW * 0.50f, 54f, "ОТМЕНА", centered = true) {
+                netMp.stop(); screen = UiScreen.MULTIPLAYER
+            }
+        } else {
+            val totKb = max(1, (netMp.modSyncTotalBytes + 1023) / 1024)
+            val subH = 34f
+            drawCenteredText(fontSmall, "У хоста включены моды, которых у вас нет или вышла новая версия (Всего: ~$totKb КБ):", cX, topY - subH - 4f, cW, subH)
+
+            val botH = max(56f, ph * 0.13f)
+            val listTop = topY - subH - 12f
+            val listBot = py + botH + 28f
+            val listH = max(80f, listTop - listBot)
+            drawThemedPanel(SpriteArt.parchmentPatch, cX, listBot, cW, listH)
+
+            val showList = netMp.missingHostMods.take(6)
+            val rowH = max(34f, (listH - 20f) / max(1, showList.size))
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            fontSmall.color = Color(0.24f, 0.14f, 0.06f, 1f)
+            showList.forEachIndexed { idx, hm ->
+                val ry = listTop - 10f - (idx + 1) * rowH
+                val kb = max(1, (hm.sizeBytes + 1023) / 1024)
+                drawFitTextBatch(fontSmall, "• ${hm.name} (v${hm.version}) — $kb КБ", cX + 18f, ry, cW - 36f, rowH, centered = false)
+            }
+            if (netMp.missingHostMods.size > 6) {
+                drawFitTextBatch(fontSmall, "...и ещё ${netMp.missingHostMods.size - 6} мод(ов)", cX + 18f, listBot + 6f, cW - 36f, 26f, centered = false)
+            }
+            fontSmall.color = Color.WHITE
+            spriteBatch.end()
+
+            val b3 = (cW - 20f) / 3f
+            drawThemedButton(SpriteArt.oceanBtnMintPatch, cX, py + 18f, b3 * 1.25f, botH, "ЗАГРУЗИТЬ И ВОЙТИ", centered = true) {
+                netMp.acceptModDownload()
+            }
+            drawThemedButton(SpriteArt.oceanBtnBluePatch, cX + b3 * 1.25f + 10f, py + 18f, b3 * 0.95f, botH, "БЕЗ МОДОВ", centered = true) {
+                netMp.skipModDownloadAndJoin()
+            }
+            drawThemedButton(SpriteArt.crimsonBtnPatch, cX + b3 * 2.20f + 20f, py + 18f, b3 * 0.80f, botH, "ОТМЕНА", centered = true) {
+                netMp.stop(); screen = UiScreen.MULTIPLAYER
+            }
         }
     }
 

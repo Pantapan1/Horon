@@ -20,6 +20,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.CRC32
 import java.util.zip.ZipFile
 import kotlin.math.floor
 import kotlin.math.max
@@ -177,6 +178,101 @@ class LuaModEngine(private val modsDir: File, private val game: VoxelHorizonGame
         }
         // Remove deleted external mods cleanly!
         mods.removeIf { !it.isBuiltin && !seenIds.contains(it.id) }
+    }
+
+    fun computeFileCrcHex(f: File): String {
+        return try {
+            val crc = CRC32()
+            f.inputStream().use { inp ->
+                val buf = ByteArray(16384)
+                while (true) {
+                    val r = inp.read(buf)
+                    if (r <= 0) break
+                    crc.update(buf, 0, r)
+                }
+            }
+            "%08x".format(crc.value)
+        } catch (_: Exception) { "00000000" }
+    }
+
+    fun getHostShareableMods(): List<HostModManifestItem> {
+        val out = mutableListOf<HostModManifestItem>()
+        for (m in mods) {
+            if (m.isBuiltin || !m.enabled) continue
+            val f = m.packFile ?: continue
+            if (!f.exists() || !f.isFile) continue
+            val len = f.length()
+            if (len <= 0L || len > 4L * 1024L * 1024L) continue
+            out += HostModManifestItem(
+                id = m.id,
+                name = m.name,
+                version = m.version,
+                fileName = f.name,
+                sizeBytes = len.toInt(),
+                crcHex = computeFileCrcHex(f)
+            )
+        }
+        return out
+    }
+
+    fun getLocalModFileBytes(modId: String): ByteArray? {
+        val m = mods.firstOrNull { it.id == modId && !it.isBuiltin } ?: return null
+        val f = m.packFile ?: return null
+        if (!f.exists() || f.length() > 4L * 1024L * 1024L) return null
+        return try { f.readBytes() } catch (_: Exception) { null }
+    }
+
+    fun findMissingHostMods(hostMods: List<HostModManifestItem>): List<HostModManifestItem> {
+        scanExternalMods()
+        val missing = mutableListOf<HostModManifestItem>()
+        for (hm in hostMods) {
+            val local = mods.firstOrNull { it.id == hm.id && !it.isBuiltin }
+            val lf = local?.packFile
+            val exactMatch = lf != null && lf.exists() && lf.length().toInt() == hm.sizeBytes && computeFileCrcHex(lf) == hm.crcHex
+            if (!exactMatch) missing += hm
+        }
+        return missing
+    }
+
+    fun installDownloadedMod(modId: String, rawFileName: String, bytes: ByteArray): Boolean {
+        return try {
+            modsDir.mkdirs()
+            val lower = rawFileName.lowercase()
+            val ext = if (lower.endsWith(".lua")) ".lua" else ".vhpack"
+            val baseId = modId.removePrefix("pack_").removePrefix("ext_")
+                .lowercase().replace(Regex("[^a-z0-9_\\-]"), "_").trim('_').ifBlank { "mod_${System.currentTimeMillis()}" }
+            val dst = File(modsDir, "$baseId$ext")
+
+            // Удаляем старые копии этого же мода под другими именами файлов, чтобы не было дублей!
+            for (m in mods.toList()) {
+                if (!m.isBuiltin && m.id == modId) {
+                    val oldF = m.packFile
+                    if (oldF != null && oldF.exists() && oldF.canonicalPath != dst.canonicalPath) {
+                        try { oldF.delete() } catch (_: Exception) {}
+                    }
+                }
+            }
+            dst.writeBytes(bytes)
+            enabledPrefs[modId] = true
+            true
+        } catch (_: Exception) { false }
+    }
+
+    fun activateHostModSet(hostModIds: Set<String>): Boolean {
+        scanExternalMods()
+        var changed = false
+        for (m in mods) {
+            if (!m.isBuiltin && hostModIds.contains(m.id)) {
+                if (!m.enabled) { m.enabled = true; changed = true }
+                enabledPrefs[m.id] = true
+            }
+        }
+        saveEnabledPrefs()
+        if (changed || hostModIds.isNotEmpty()) {
+            hotReload()
+            return true
+        }
+        return false
     }
 
     fun deleteExternalMod(modId: String): Boolean {

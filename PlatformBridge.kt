@@ -44,8 +44,8 @@ data class ImportedFileEvent(
 )
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.12.0"
-    const val CURRENT_TAG = "v6.12-rust-latest"
+    const val CURRENT_VERSION = "6.13.0"
+    const val CURRENT_TAG = "v6.13-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
     const val PROVIDER_AUTHORITY = "com.voxelhorizon.nativegame.apkprovider"

@@ -20,6 +20,17 @@ import kotlin.concurrent.thread
 import kotlin.math.hypot
 import kotlin.random.Random
 
+enum class ModSyncState { IDLE, CHECKING, PROMPT, DOWNLOADING, DONE }
+
+data class HostModManifestItem(
+    val id: String,
+    val name: String,
+    val version: String,
+    val fileName: String,
+    val sizeBytes: Int,
+    val crcHex: String
+)
+
 data class RemotePlayer(
     val id: String,
     var nick: String,
@@ -78,6 +89,24 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     private val netSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-net-send").apply { isDaemon = true } }
     private val voiceSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-voice-send").apply { isDaemon = true } }
     private val voiceInFlight = AtomicBoolean(false)
+    private val modTransferExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-mod-xfer").apply { isDaemon = true } }
+
+    // === Автосинхронизация модов от Хоста (Bedrock-style v6.13) ===
+    @Volatile var modSyncState = ModSyncState.IDLE
+    @Volatile var hostGameVersion = ""
+    @Volatile var hostManifestMods: List<HostModManifestItem> = emptyList()
+    @Volatile var missingHostMods: List<HostModManifestItem> = emptyList()
+    @Volatile var modSyncStatusText = ""
+    @Volatile var modSyncCurrentName = ""
+    @Volatile var modSyncDoneFiles = 0
+    @Volatile var modSyncTotalFiles = 0
+    @Volatile var modSyncDoneBytes = 0
+    @Volatile var modSyncTotalBytes = 0
+    @Volatile private var worldInitReceived = false
+    @Volatile private var activeDlModId = ""
+    @Volatile private var activeDlChunks: Array<ByteArray?>? = null
+    @Volatile private var activeDlReceivedCount = 0
+    @Volatile private var activeDlLastChunkMs = 0L
     private val posInFlight = AtomicBoolean(false)
     private val mobsInFlight = AtomicBoolean(false)
     private val dropsInFlight = AtomicBoolean(false)
@@ -175,9 +204,18 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                     }
                 }
 
-                // If guest -> request world sync from Host!
+                // If guest -> ask Host for mod manifest first (v6.13), with automatic fallback to old hosts!
                 if (!asHost) {
-                    publishOnlinePacket { p -> p.writeByte(5) } // JOIN_REQ
+                    modSyncState = ModSyncState.CHECKING
+                    modSyncStatusText = "Проверка модов хоста..."
+                    publishOnlinePacket { p -> p.writeByte(18); p.writeUTF(PlatformBridge.CURRENT_VERSION) } // MOD_HELLO_REQ
+                    thread(isDaemon = true) {
+                        try { Thread.sleep(2600) } catch (_: Exception) {}
+                        if (isConnected && !isHost && modSyncState == ModSyncState.CHECKING && !worldInitReceived) {
+                            modSyncState = ModSyncState.DONE
+                            sendJoinWorldRequest()
+                        }
+                    }
                 }
 
                 // 3. MQTT Receive Loop
@@ -437,8 +475,11 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
         if (asHost) clientStreams.add(out) else clientOut = out
 
         if (asHost) {
-            val initBytes = buildCompressedWorldInit()
-            synchronized(out) { out.writeByte(4); out.writeInt(initBytes.size); out.write(initBytes); out.flush() }
+            sendModManifestToHost(targetTcp = out)
+        } else {
+            modSyncState = ModSyncState.CHECKING
+            modSyncStatusText = "Проверка модов хоста (LAN)..."
+            try { synchronized(out) { out.writeByte(18); out.writeUTF(PlatformBridge.CURRENT_VERSION); out.flush() } } catch (_: Exception) {}
         }
 
         thread(isDaemon = true) {
@@ -500,23 +541,30 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             }
             4 -> { // WORLD_INIT (GZIP)
                 val len = inp.readInt()
+                if (len !in 1..(4 * 1024 * 1024)) throw RuntimeException("Повреждённый пакет мира ($len)")
                 val gz = ByteArray(len); inp.readFully(gz)
-                if (asHost) return
+                if (asHost || worldInitReceived) return
+                worldInitReceived = true
+                modSyncState = ModSyncState.DONE
                 DataInputStream(GZIPInputStream(ByteArrayInputStream(gz))).use { zIn ->
                     val seed = zIn.readInt(); val dim = zIn.readUTF()
                     val dayCnt = zIn.readInt(); val seasLen = zIn.readInt(); val wTime = zIn.readFloat()
                     val hx = zIn.readFloat(); val hy = zIn.readFloat(); val hz = zIn.readFloat()
-                    val cnt = zIn.readInt(); val mods = HashMap<String, Int>(cnt)
+                    val cnt = zIn.readInt().coerceIn(0, 10000); val mods = HashMap<String, Int>(cnt)
                     for (i in 0 until cnt) mods[zIn.readUTF()] = zIn.readInt()
-                    val sCnt = zIn.readInt(); val signs = HashMap<String, String>(sCnt)
+                    val sCnt = zIn.readInt().coerceIn(0, 1000); val signs = HashMap<String, String>(sCnt)
                     for (i in 0 until sCnt) signs[zIn.readUTF()] = zIn.readUTF()
                     game.applyHostWorldInit(seed, dim, dayCnt, seasLen, wTime, hx, hy, hz, mods, signs)
                 }
             }
-            5 -> { // JOIN_REQ (Гость просит мир у Онлайн-Хоста!)
-                if (asHost && isOnlineRelay) {
+            5 -> { // JOIN_REQ (Гость готов и просит мир у Хоста — работает и Онлайн, и LAN!)
+                if (asHost) {
                     val initBytes = buildCompressedWorldInit()
-                    publishOnlinePacket { p -> p.writeByte(4); p.writeInt(initBytes.size); p.write(initBytes) }
+                    if (isOnlineRelay) {
+                        publishOnlinePacket { p -> p.writeByte(4); p.writeInt(initBytes.size); p.write(initBytes) }
+                    } else if (skipTcp != null) {
+                        try { synchronized(skipTcp) { skipTcp.writeByte(4); skipTcp.writeInt(initBytes.size); skipTcp.write(initBytes); skipTcp.flush() } } catch (_: Exception) {}
+                    }
                 }
             }
             6 -> { // TIME_SYNC
@@ -596,7 +644,244 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                     if (asHost && !isOnlineRelay) broadcastVoice(vData, skip = skipTcp)
                 }
             }
+            18 -> { // MOD_HELLO_REQ (Гость запрашивает список активных модов хоста!)
+                inp.readUTF() // guestVersion
+                if (asHost) sendModManifestToHost(targetTcp = if (isOnlineRelay) null else skipTcp)
+            }
+            19 -> { // MOD_MANIFEST (Хост прислал список своих модов -> сверяем у Гостя!)
+                val hVer = inp.readUTF()
+                val cnt = inp.readInt().coerceIn(0, 64)
+                val list = ArrayList<HostModManifestItem>(cnt)
+                for (i in 0 until cnt) {
+                    list.add(
+                        HostModManifestItem(
+                            id = inp.readUTF(),
+                            name = inp.readUTF(),
+                            version = inp.readUTF(),
+                            fileName = inp.readUTF(),
+                            sizeBytes = inp.readInt().coerceIn(0, 4 * 1024 * 1024),
+                            crcHex = inp.readUTF()
+                        )
+                    )
+                }
+                if (!asHost && !worldInitReceived && (modSyncState == ModSyncState.IDLE || modSyncState == ModSyncState.CHECKING)) {
+                    handleHostModManifest(hVer, list)
+                }
+            }
+            20 -> { // MOD_FILE_REQ (Гость просит скачать конкретный мод или пропавший чанк!)
+                val reqModId = inp.readUTF()
+                val reqChunk = inp.readInt()
+                if (asHost) {
+                    sendModFileChunksToGuest(reqModId, reqChunk, targetTcp = if (isOnlineRelay) null else skipTcp)
+                }
+            }
+            21 -> { // MOD_FILE_CHUNK (Чанк .vhpack / .lua от Хоста к Гостю!)
+                val mId = inp.readUTF()
+                inp.readUTF() // fileName
+                val cIdx = inp.readInt()
+                val totalC = inp.readInt()
+                val dLen = inp.readInt()
+                if (dLen !in 0..32768) throw RuntimeException("Неверный чанк мода ($dLen)")
+                val chunkBytes = ByteArray(dLen)
+                if (dLen > 0) inp.readFully(chunkBytes)
+                if (!asHost && modSyncState == ModSyncState.DOWNLOADING && mId == activeDlModId) {
+                    val arr = activeDlChunks
+                    if (arr != null && totalC == arr.size && cIdx in arr.indices) {
+                        if (arr[cIdx] == null) {
+                            arr[cIdx] = chunkBytes
+                            activeDlReceivedCount++
+                            modSyncDoneBytes += dLen
+                        }
+                        activeDlLastChunkMs = System.currentTimeMillis()
+                    }
+                }
+            }
+            else -> {
+                if (!isOnlineRelay) throw RuntimeException("Несовместимая версия игры у хоста!")
+            }
         }
+    }
+
+    // === ЛОГИКА АВТОСИНХРОНИЗАЦИИ МОДОВ (BEDROCK-STYLE) ===
+    private fun sendModManifestToHost(targetTcp: DataOutputStream?) {
+        val list = game.luaMods.getHostShareableMods()
+        val writer: (DataOutputStream) -> Unit = { p ->
+            p.writeByte(19)
+            p.writeUTF(PlatformBridge.CURRENT_VERSION)
+            p.writeInt(list.size)
+            for (m in list) {
+                p.writeUTF(m.id); p.writeUTF(m.name); p.writeUTF(m.version)
+                p.writeUTF(m.fileName); p.writeInt(m.sizeBytes); p.writeUTF(m.crcHex)
+            }
+        }
+        modTransferExec.execute {
+            if (isOnlineRelay) publishOnlinePacket(writer)
+            else if (targetTcp != null) {
+                try { synchronized(targetTcp) { writer(targetTcp); targetTcp.flush() } } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun sendModFileChunksToGuest(modId: String, onlyChunk: Int, targetTcp: DataOutputStream?) {
+        val bytes = game.luaMods.getLocalModFileBytes(modId) ?: return
+        val entry = game.luaMods.mods.firstOrNull { it.id == modId }
+        val fileName = entry?.packFile?.name ?: "$modId.vhpack"
+        val chunkSize = 8192
+        val totalChunks = kotlin.math.max(1, (bytes.size + chunkSize - 1) / chunkSize)
+
+        modTransferExec.execute {
+            val range = if (onlyChunk in 0 until totalChunks) onlyChunk..onlyChunk else 0 until totalChunks
+            for (ci in range) {
+                if (!isConnected) break
+                val start = ci * chunkSize
+                val end = kotlin.math.min(bytes.size, start + chunkSize)
+                val len = kotlin.math.max(0, end - start)
+                val slice = bytes.copyOfRange(start, start + len)
+                val writer: (DataOutputStream) -> Unit = { p ->
+                    p.writeByte(21)
+                    p.writeUTF(modId); p.writeUTF(fileName)
+                    p.writeInt(ci); p.writeInt(totalChunks)
+                    p.writeInt(len); if (len > 0) p.write(slice)
+                }
+                if (isOnlineRelay) publishOnlinePacket(writer)
+                else if (targetTcp != null) {
+                    try { synchronized(targetTcp) { writer(targetTcp); targetTcp.flush() } } catch (_: Exception) { break }
+                }
+                try { Thread.sleep(if (isOnlineRelay) 35L else 4L) } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun handleHostModManifest(hVer: String, hostMods: List<HostModManifestItem>) {
+        hostGameVersion = hVer
+        hostManifestMods = hostMods
+        if (hostMods.isEmpty()) {
+            modSyncState = ModSyncState.DONE
+            sendJoinWorldRequest()
+            return
+        }
+        val missing = game.luaMods.findMissingHostMods(hostMods)
+        if (missing.isEmpty()) {
+            // Все моды хоста уже есть у гостя — включаем их если выключены и сразу входим в мир!
+            modSyncState = ModSyncState.DONE
+            com.badlogic.gdx.Gdx.app.postRunnable {
+                game.luaMods.activateHostModSet(hostMods.map { it.id }.toSet())
+                sendJoinWorldRequest()
+            }
+            return
+        }
+        // Есть недостающие или более новые моды -> показываем окно подтверждения загрузки!
+        missingHostMods = missing
+        modSyncTotalFiles = missing.size
+        modSyncDoneFiles = 0
+        modSyncTotalBytes = missing.sumOf { it.sizeBytes }
+        modSyncDoneBytes = 0
+        modSyncCurrentName = ""
+        modSyncStatusText = "Нужно загрузить модов: ${missing.size}"
+        modSyncState = ModSyncState.PROMPT
+        com.badlogic.gdx.Gdx.app.postRunnable {
+            game.screen = UiScreen.MOD_SYNC_PROMPT
+        }
+    }
+
+    fun sendJoinWorldRequest() {
+        if (!isConnected || isHost) return
+        netSendExec.execute {
+            if (!isConnected || isHost) return@execute
+            if (isOnlineRelay) {
+                publishOnlinePacket { p -> p.writeByte(5) }
+            } else {
+                clientOut?.let { o -> try { synchronized(o) { o.writeByte(5); o.flush() } } catch (_: Exception) {} }
+            }
+        }
+    }
+
+    fun skipModDownloadAndJoin() {
+        modSyncState = ModSyncState.DONE
+        modSyncStatusText = "Вход без загрузки модов..."
+        sendJoinWorldRequest()
+    }
+
+    fun acceptModDownload() {
+        if (modSyncState != ModSyncState.PROMPT) return
+        val toDownload = missingHostMods.toList()
+        if (toDownload.isEmpty()) { skipModDownloadAndJoin(); return }
+        modSyncState = ModSyncState.DOWNLOADING
+        modSyncDoneFiles = 0
+        modSyncDoneBytes = 0
+        modSyncTotalFiles = toDownload.size
+        modSyncTotalBytes = toDownload.sumOf { it.sizeBytes }.coerceAtLeast(1)
+
+        thread(isDaemon = true, name = "vh-mod-downloader") {
+            try {
+                for ((idx, hm) in toDownload.withIndex()) {
+                    if (!isConnected || modSyncState != ModSyncState.DOWNLOADING) return@thread
+                    modSyncCurrentName = "${hm.name} v${hm.version}"
+                    modSyncStatusText = "Загрузка (${idx + 1}/${toDownload.size}): ${hm.name}..."
+                    val chunkSize = 8192
+                    val totalC = kotlin.math.max(1, (hm.sizeBytes + chunkSize - 1) / chunkSize)
+                    val chunks = arrayOfNulls<ByteArray>(totalC)
+                    activeDlModId = hm.id
+                    activeDlChunks = chunks
+                    activeDlReceivedCount = 0
+                    activeDlLastChunkMs = System.currentTimeMillis()
+
+                    requestModChunkFromHost(hm.id, -1)
+
+                    var retries = 0
+                    while (isConnected && modSyncState == ModSyncState.DOWNLOADING && activeDlReceivedCount < totalC) {
+                        try { Thread.sleep(75) } catch (_: Exception) {}
+                        val idleMs = System.currentTimeMillis() - activeDlLastChunkMs
+                        if (idleMs > 1400L) {
+                            retries++
+                            if (retries > 6) {
+                                modSyncStatusText = "Таймаут загрузки: ${hm.name}"
+                                modSyncState = ModSyncState.PROMPT
+                                game.showToast("Не удалось скачать «${hm.name}» — нажмите Повторить!")
+                                return@thread
+                            }
+                            activeDlLastChunkMs = System.currentTimeMillis()
+                            var sentReqs = 0
+                            for (ci in 0 until totalC) {
+                                if (chunks[ci] == null) {
+                                    requestModChunkFromHost(hm.id, ci)
+                                    sentReqs++
+                                    if (sentReqs >= 4) break
+                                }
+                            }
+                        }
+                    }
+
+                    if (!isConnected || modSyncState != ModSyncState.DOWNLOADING) return@thread
+                    val bos = ByteArrayOutputStream(hm.sizeBytes)
+                    for (ci in 0 until totalC) chunks[ci]?.let { bos.write(it) }
+                    game.luaMods.installDownloadedMod(hm.id, hm.fileName, bos.toByteArray())
+                    modSyncDoneFiles = idx + 1
+                }
+
+                // Все моды скачаны! Применяем на GL-потоке и входим в мир хоста!
+                val allIds = hostManifestMods.map { it.id }.toSet()
+                modSyncStatusText = "Применение модов и вход в мир..."
+                com.badlogic.gdx.Gdx.app.postRunnable {
+                    game.luaMods.activateHostModSet(allIds)
+                    modSyncState = ModSyncState.DONE
+                    game.showToast("Моды хоста загружены (${toDownload.size})! Входим в мир...")
+                    sendJoinWorldRequest()
+                }
+            } catch (e: Exception) {
+                modSyncStatusText = "Ошибка загрузки: ${e.message ?: "сеть"}"
+                modSyncState = ModSyncState.PROMPT
+            } finally {
+                activeDlModId = ""
+                activeDlChunks = null
+            }
+        }
+    }
+
+    private fun requestModChunkFromHost(modId: String, chunkIdx: Int) {
+        val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(20); p.writeUTF(modId); p.writeInt(chunkIdx) }
+        if (isOnlineRelay) publishOnlinePacket(writer)
+        else clientOut?.let { o -> try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {} }
     }
 
     fun interpolateRemotePlayers(dt: Float) {
@@ -831,6 +1116,9 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
 
     fun stop() {
         isHost = false; isConnected = false; isOnlineRelay = false; roomCode = ""
+        worldInitReceived = false; modSyncState = ModSyncState.IDLE
+        missingHostMods = emptyList(); hostManifestMods = emptyList()
+        activeDlModId = ""; activeDlChunks = null
         try { serverSocket?.close() } catch (_: Exception) {}
         try { clientSocket?.close() } catch (_: Exception) {}
         try { mqttSocket?.close() } catch (_: Exception) {}
