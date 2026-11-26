@@ -21,11 +21,49 @@
         <activity
             android:name=".AndroidLauncher"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Открытие миров (.vhworld) и модов (.vhmod / .vhpack / .lua) по тапу в проводнике и мессенджерах! -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.vhworld" />
+                <data android:pathPattern=".*\\..*\\.vhworld" />
+                <data android:pathPattern=".*\\.vhmod" />
+                <data android:pathPattern=".*\\..*\\.vhmod" />
+                <data android:pathPattern=".*\\.vhpack" />
+                <data android:pathPattern=".*\\..*\\.vhpack" />
+                <data android:pathPattern=".*\\.lua" />
+                <data android:pathPattern=".*\\..*\\.lua" />
+            </intent-filter>
+
+            <!-- Открытие из Telegram / VK / Загрузок, когда мессенджер передаёт content:// без расширения в пути -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <!-- Кнопка «Поделиться -> VoxelHorizon» из любого мессенджера или файлового менеджера! -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 

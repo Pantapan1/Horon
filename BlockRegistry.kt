@@ -71,6 +71,9 @@ object BlockRegistry {
     private var itemsTexture5: Texture? = null
     val iconRegions = ConcurrentHashMap<Int, TextureRegion>()
     private var nextModTile = 84
+    private val customBlockTiles = HashMap<Int, Int>()
+    private val customItemTextures = HashMap<Int, Texture>()
+    private var baseRecipeCount = 0
 
     fun init() {
         items.clear(); recipes.clear(); smeltMap.clear(); iconRegions.clear()
@@ -488,6 +491,7 @@ object BlockRegistry {
         smeltMap[157] = 115; smeltMap[145] = 146; smeltMap[206] = 207; smeltMap[209] = 210
         smeltMap[151] = 222; smeltMap[152] = 222; smeltMap[153] = 222
 
+        baseRecipeCount = recipes.size
         buildAtlas()
         buildItemIcons()
     }
@@ -654,6 +658,83 @@ object BlockRegistry {
         iconRegions[96]  = pIcon(58); iconRegions[98]  = pIcon(59)
     }
 
+    fun clearCustomRecipes() {
+        while (recipes.size > baseRecipeCount) recipes.removeAt(recipes.lastIndex)
+    }
+
+    fun registerCustomBlock8x8(
+        id: Int, name: String, pixels8x8: IntArray,
+        solid: Boolean = true, lightRadius: Float = 0f, lightColor: Int = 0xFFE688,
+        hardness: Float = 1.0f, dropId: Int = id
+    ): Int {
+        val tid = customBlockTiles.getOrPut(id) {
+            if (nextModTile < ATLAS_COLS * ATLAS_ROWS - 1) nextModTile++ else 84 + (id % 36)
+        }
+        val tx = (tid % ATLAS_COLS) * TILE_PX
+        val ty = (tid / ATLAS_COLS) * TILE_PX
+        val cell = TILE_PX / 8
+        atlasPixmap.blending = Pixmap.Blending.None
+        var avgR = 0L; var avgG = 0L; var avgB = 0L
+        for (py in 0 until 8) for (px in 0 until 8) {
+            val hex = pixels8x8[py * 8 + px]
+            val r = (hex shr 16) and 0xFF; val g = (hex shr 8) and 0xFF; val b = hex and 0xFF
+            avgR += r; avgG += g; avgB += b
+            atlasPixmap.setColor(r / 255f, g / 255f, b / 255f, 1f)
+            atlasPixmap.fillRectangle(tx + px * cell, ty + py * cell, cell, cell)
+        }
+        val avgHex = (((avgR / 64).toInt() and 0xFF) shl 16) or (((avgG / 64).toInt() and 0xFF) shl 8) or ((avgB / 64).toInt() and 0xFF)
+        Gdx.app.postRunnable { if (::atlasTexture.isInitialized) atlasTexture.draw(atlasPixmap, 0, 0) }
+        items[id] = ItemDef(
+            id = id, name = name, solid = solid, transparent = !solid,
+            lightRadius = lightRadius, lightColor = lightColor,
+            hardness = hardness, dropId = if (dropId > 0) dropId else id,
+            toolType = "pick", topTile = tid, sideTile = tid, colorHex = avgHex
+        )
+        iconRegions[id] = TextureRegion(atlasTexture, tx, ty, TILE_PX, TILE_PX)
+        RustEngine.nativeRegisterModBlock(id, tid, avgHex)
+        return tid
+    }
+
+    fun registerCustomItem8x8(
+        id: Int, name: String, pixels8x8: IntArray,
+        kind: String, damage: Int, mineSpeed: Float, durability: Int,
+        healHp: Int, healFood: Int, aoeMine: Boolean
+    ) {
+        val pm = Pixmap(64, 64, Pixmap.Format.RGBA8888)
+        pm.blending = Pixmap.Blending.None
+        pm.setColor(0f, 0f, 0f, 0f); pm.fill()
+        var avgR = 0L; var avgG = 0L; var avgB = 0L; var cnt = 0
+        for (py in 0 until 8) for (px in 0 until 8) {
+            val hex = pixels8x8[py * 8 + px]
+            if (hex < 0) continue // transparent pixel!
+            val r = (hex shr 16) and 0xFF; val g = (hex shr 8) and 0xFF; val b = hex and 0xFF
+            avgR += r; avgG += g; avgB += b; cnt++
+            pm.setColor(r / 255f, g / 255f, b / 255f, 1f)
+            pm.fillRectangle(px * 8, py * 8, 8, 8)
+        }
+        val avgHex = if (cnt > 0) ((((avgR / cnt).toInt() and 0xFF) shl 16) or (((avgG / cnt).toInt() and 0xFF) shl 8) or ((avgB / cnt).toInt() and 0xFF)) else 0xFFFFFF
+        val toolType = if (kind == "pick") "pick" else ""
+        val weaponStyle = when (kind) {
+            "sword" -> "katana"
+            "staff" -> "staff_amethyst"
+            "fire_staff" -> "staff_fire"
+            else -> ""
+        }
+        items[id] = ItemDef(
+            id = id, name = name, isItem = true, colorHex = avgHex,
+            toolType = toolType, weaponStyle = weaponStyle,
+            damage = damage, mineSpeed = mineSpeed, aoeMine = aoeMine,
+            healFood = healFood, healHp = healHp, maxDurability = durability
+        )
+        Gdx.app.postRunnable {
+            customItemTextures.remove(id)?.dispose()
+            val t = Texture(pm).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest) }
+            pm.dispose()
+            customItemTextures[id] = t
+            iconRegions[id] = TextureRegion(t)
+        }
+    }
+
     fun registerModBlock(id: Int, name: String, r: Float, g: Float, b: Float): Int {
         val tid = if (nextModTile < ATLAS_COLS * ATLAS_ROWS - 1) nextModTile++ else 16
         val tx = (tid % ATLAS_COLS) * TILE_PX; val ty = (tid / ATLAS_COLS) * TILE_PX
@@ -673,5 +754,6 @@ object BlockRegistry {
         if (::atlasPixmap.isInitialized) atlasPixmap.dispose()
         itemsTexture1?.dispose(); itemsTexture2?.dispose(); itemsTexture3?.dispose()
         itemsTexture4?.dispose(); itemsTexture5?.dispose()
+        for (t in customItemTextures.values) t.dispose(); customItemTextures.clear()
     }
 }

@@ -2,12 +2,13 @@ package com.voxelhorizon.nativegame
 
 import android.app.AlarmManager
 import android.app.DownloadManager
-import android.os.Environment
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
@@ -16,27 +17,46 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.provider.Settings
 import java.io.BufferedReader
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.zip.ZipInputStream
 import kotlin.concurrent.thread
 
+data class ImportedFileEvent(
+    val kind: String, // "world", "nocode_mod", "lua_mod", "vhpack", "error"
+    val name: String,
+    val file: File?,
+    val message: String = ""
+)
+
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.8.0"
-    const val CURRENT_TAG = "v6.8-rust-latest"
+    const val CURRENT_VERSION = "6.9.1"
+    const val CURRENT_TAG = "v6.9-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
-    const val APK_PROVIDER_URI = "content://com.voxelhorizon.nativegame.apkprovider/voxelhorizon_update.apk"
+    const val PROVIDER_AUTHORITY = "com.voxelhorizon.nativegame.apkprovider"
+    const val APK_PROVIDER_URI = "content://$PROVIDER_AUTHORITY/voxelhorizon_update.apk"
     const val CHANNEL_ID = "voxelhorizon_alerts"
 
     @Volatile var appContext: Context? = null
     @Volatile var backupDir: File? = null
+    @Volatile var storageRootDir: File? = null
+    @Volatile var onBeforeUpdateCallback: (() -> Unit)? = null
+    @Volatile var onPickFileRequest: (() -> Unit)? = null
+
+    val pendingImports = ConcurrentLinkedQueue<ImportedFileEvent>()
 
     @Volatile var updateAvailable = false
     @Volatile var updateTag = ""
@@ -47,11 +67,238 @@ object PlatformBridge {
     @Volatile var updateDownloading = false
     @Volatile var updateProgress = 0
 
-    fun init(ctx: Context, publicMirrorDir: File?) {
+    fun init(ctx: Context, publicMirrorDir: File?, activeRoot: File? = null) {
         appContext = ctx.applicationContext
         backupDir = publicMirrorDir
+        storageRootDir = activeRoot
         createNotificationChannel(ctx.applicationContext)
         checkGitHubUpdate()
+    }
+
+    // === НАДЁЖНОЕ ХРАНИЛИЩЕ ПРОФИЛЯ (SharedPreferences + внутренняя память filesDir — 100% переживает обновления!) ===
+    fun saveProfileVault(text: String) {
+        val ctx = appContext ?: return
+        val now = System.currentTimeMillis()
+        try {
+            ctx.getSharedPreferences("vh_profile_vault", Context.MODE_PRIVATE)
+                .edit()
+                .putString("profile_data", text)
+                .putLong("profile_ts", now)
+                .commit()
+        } catch (_: Exception) {}
+        try {
+            val f = File(File(ctx.filesDir, "VoxelHorizon"), "profiles_v62.dat")
+            f.parentFile?.mkdirs()
+            f.writeText(text, Charsets.UTF_8)
+        } catch (_: Exception) {}
+    }
+
+    fun loadProfileVaultCandidates(): List<Pair<String, Long>> {
+        val ctx = appContext ?: return emptyList()
+        val out = mutableListOf<Pair<String, Long>>()
+        try {
+            val sp = ctx.getSharedPreferences("vh_profile_vault", Context.MODE_PRIVATE)
+            val txt = sp.getString("profile_data", null)
+            val ts = sp.getLong("profile_ts", 0L)
+            if (!txt.isNullOrBlank() && txt.length > 10) out += Pair(txt, ts)
+        } catch (_: Exception) {}
+        try {
+            val f = File(File(ctx.filesDir, "VoxelHorizon"), "profiles_v62.dat")
+            if (f.exists() && f.length() > 10) out += Pair(f.readText(Charsets.UTF_8), f.lastModified())
+        } catch (_: Exception) {}
+        try {
+            val extApp = File(File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "VoxelHorizon"), "profiles_v62.dat")
+            if (extApp.exists() && extApp.length() > 10) out += Pair(extApp.readText(Charsets.UTF_8), extApp.lastModified())
+        } catch (_: Exception) {}
+        return out
+    }
+
+    fun saveNoCodeModsVault(text: String) {
+        val ctx = appContext ?: return
+        try {
+            val f = File(File(ctx.filesDir, "VoxelHorizon/mods"), "nocode_mods_v69.dat")
+            f.parentFile?.mkdirs()
+            f.writeText(text, Charsets.UTF_8)
+        } catch (_: Exception) {}
+        try {
+            backupDir?.let { bd ->
+                val mf = File(File(bd, "mods"), "nocode_mods_v69.dat")
+                mf.parentFile?.mkdirs()
+                mf.writeText(text, Charsets.UTF_8)
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun loadNoCodeModsVault(): String? {
+        val ctx = appContext ?: return null
+        val candidates = listOfNotNull(
+            File(File(ctx.filesDir, "VoxelHorizon/mods"), "nocode_mods_v69.dat"),
+            backupDir?.let { File(File(it, "mods"), "nocode_mods_v69.dat") }
+        ).filter { it.exists() && it.length() > 5 }
+        val newest = candidates.maxByOrNull { it.lastModified() } ?: return null
+        return try { newest.readText(Charsets.UTF_8) } catch (_: Exception) { null }
+    }
+
+    // === ИМПОРТ МИРОВ И МОДОВ ПО ТАПУ В ПРОВОДНИКЕ ИЛИ МЕССЕНДЖЕРЕ (Telegram / VK / Files) ===
+    fun handleIncomingIntent(ctx: Context, intent: Intent, storageRoot: File) {
+        val action = intent.action ?: return
+        val uri: Uri? = when (action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+            else -> null
+        }
+        if (uri != null) handleIncomingUri(ctx, uri, storageRoot)
+    }
+
+    private fun queryDisplayName(ctx: Context, uri: Uri): String {
+        try {
+            ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) {
+                        val n = c.getString(idx)
+                        if (!n.isNullOrBlank()) return n
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        val seg = uri.lastPathSegment ?: "imported_${System.currentTimeMillis()}"
+        return seg.substringAfterLast('/').substringAfterLast(':')
+    }
+
+    private fun sanitizeFileName(raw: String, fallbackExt: String): String {
+        val clean = raw.replace(Regex("[^a-zA-Z0-9А-Яа-яЁё._\\- ]"), "_").trim().take(48)
+        val base = clean.ifBlank { "import_${System.currentTimeMillis()}" }
+        return if (base.endsWith(fallbackExt, ignoreCase = true)) base else "$base$fallbackExt"
+    }
+
+    fun handleIncomingUri(ctx: Context, uri: Uri, storageRoot: File) {
+        thread(isDaemon = true) {
+            try {
+                val rawName = queryDisplayName(ctx, uri)
+                val lower = rawName.lowercase()
+                val bytes = ctx.contentResolver.openInputStream(uri)?.use { inp ->
+                    val bos = ByteArrayOutputStream()
+                    val buf = ByteArray(16384)
+                    var total = 0
+                    while (true) {
+                        val r = inp.read(buf)
+                        if (r <= 0) break
+                        total += r
+                        if (total > 50 * 1024 * 1024) throw RuntimeException("Файл слишком большой (>50 МБ)")
+                        bos.write(buf, 0, r)
+                    }
+                    bos.toByteArray()
+                } ?: throw RuntimeException("Не удалось прочитать файл")
+
+                if (bytes.size < 4) throw RuntimeException("Пустой файл")
+
+                // 1. Проверяем бинарный заголовок мира (.vhworld: первые 4 байта = версия 52/54/63/67)
+                val firstInt = DataInputStream(ByteArrayInputStream(bytes)).readInt()
+                val isWorldMagic = firstInt == 52 || firstInt == 54 || firstInt == 63 || firstInt == 67
+
+                // 2. Проверяем ZIP / .vhpack заголовок (PK\x03\x04)
+                val isZipMagic = bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()
+
+                // 3. Проверяем текстовый формат (.vhmod / .lua)
+                val headText = if (!isWorldMagic && !isZipMagic) String(bytes, 0, minOf(bytes.size, 2048), Charsets.UTF_8).trimStart() else ""
+                val isNoCodeModText = headText.startsWith("WORLD|") || headText.startsWith("BLK|") || headText.startsWith("ITM|") ||
+                    headText.startsWith("REC|") || headText.startsWith("MOB|") || headText.startsWith("RULE|")
+                val isLuaText = headText.contains("VH.") || headText.contains("function(") || headText.contains("local ")
+
+                val worldsDir = File(storageRoot, "worlds").also { it.mkdirs() }
+                val modsDir = File(storageRoot, "mods").also { it.mkdirs() }
+
+                when {
+                    lower.endsWith(".vhworld") || isWorldMagic -> {
+                        val fn = sanitizeFileName(rawName, ".vhworld")
+                        val dst = File(worldsDir, fn)
+                        dst.writeBytes(bytes)
+                        pendingImports.add(ImportedFileEvent("world", fn.removeSuffix(".vhworld"), dst))
+                    }
+                    lower.endsWith(".vhmod") || isNoCodeModText -> {
+                        val fn = sanitizeFileName(rawName, ".vhmod")
+                        val dst = File(modsDir, fn)
+                        dst.writeBytes(bytes)
+                        pendingImports.add(ImportedFileEvent("nocode_mod", fn.removeSuffix(".vhmod"), dst))
+                    }
+                    lower.endsWith(".lua") || isLuaText -> {
+                        val fn = sanitizeFileName(rawName, ".lua")
+                        val dst = File(modsDir, fn)
+                        dst.writeBytes(bytes)
+                        pendingImports.add(ImportedFileEvent("lua_mod", fn.removeSuffix(".lua"), dst))
+                    }
+                    lower.endsWith(".vhpack") || lower.endsWith(".zip") || isZipMagic -> {
+                        // Умный разбор ZIP / .vhpack: ищем внутри .vhworld, .vhmod или main.lua!
+                        var hasMainLua = false
+                        var extractedWorld: File? = null
+                        var extractedNoCode: File? = null
+                        ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
+                            while (true) {
+                                val e = zis.nextEntry ?: break
+                                val en = e.name.lowercase()
+                                if (en == "main.lua" || en == "scripts/main.lua") {
+                                    hasMainLua = true
+                                } else if (en.endsWith(".vhworld") && !e.isDirectory) {
+                                    val wName = sanitizeFileName(File(e.name).name, ".vhworld")
+                                    val outW = File(worldsDir, wName)
+                                    outW.writeBytes(zis.readBytes())
+                                    extractedWorld = outW
+                                } else if ((en.endsWith(".vhmod") || en.endsWith("nocode_mods_v69.dat")) && !e.isDirectory) {
+                                    val mName = sanitizeFileName(File(e.name).name, ".vhmod")
+                                    val outM = File(modsDir, mName)
+                                    outM.writeBytes(zis.readBytes())
+                                    extractedNoCode = outM
+                                }
+                            }
+                        }
+                        if (extractedWorld != null) {
+                            pendingImports.add(ImportedFileEvent("world", extractedWorld!!.nameWithoutExtension, extractedWorld))
+                        }
+                        if (extractedNoCode != null) {
+                            pendingImports.add(ImportedFileEvent("nocode_mod", extractedNoCode!!.nameWithoutExtension, extractedNoCode))
+                        }
+                        if (hasMainLua || (extractedWorld == null && extractedNoCode == null)) {
+                            val fn = sanitizeFileName(rawName, ".vhpack")
+                            val dst = File(modsDir, fn)
+                            dst.writeBytes(bytes)
+                            pendingImports.add(ImportedFileEvent("vhpack", fn.removeSuffix(".vhpack"), dst))
+                        }
+                    }
+                    else -> {
+                        pendingImports.add(ImportedFileEvent("error", rawName, null, "Неподдерживаемый файл: $rawName (нужен .vhworld, .vhmod, .lua или .vhpack)"))
+                    }
+                }
+            } catch (e: Exception) {
+                pendingImports.add(ImportedFileEvent("error", "", null, "Ошибка импорта: ${e.message ?: "файл"}"))
+            }
+        }
+    }
+
+    fun shareFile(srcFile: File, chooserTitle: String): Boolean {
+        val ctx = appContext ?: return false
+        if (!srcFile.exists()) return false
+        return try {
+            val expDir = File(ctx.cacheDir, "export").also { it.mkdirs() }
+            val safeName = srcFile.name.replace(Regex("[^a-zA-Z0-9._\\-]"), "_")
+            val dst = File(expDir, safeName)
+            srcFile.copyTo(dst, overwrite = true)
+            val uri = Uri.parse("content://$PROVIDER_AUTHORITY/export/$safeName")
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, safeName)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(send, chooserTitle).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(chooser)
+            true
+        } catch (_: Exception) { false }
     }
 
     fun createNotificationChannel(ctx: Context) {
@@ -116,6 +363,15 @@ object PlatformBridge {
         } catch (e: Exception) {
             "Ошибка копирования: ${e.message ?: "доступ"}"
         }
+    }
+
+    fun copyToClipboard(label: String, text: String): Boolean {
+        val ctx = appContext ?: return false
+        return try {
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+            cm.setPrimaryClip(ClipData.newPlainText(label, text))
+            true
+        } catch (_: Exception) { false }
     }
 
     fun openBrowserUrl(url: String) {
@@ -235,10 +491,12 @@ object PlatformBridge {
         }
     }
 
-    // Скачивание APK прямо в игре с прогрессом и автоматическим запуском установщика Android!
     fun downloadAndInstallUpdate(onStatus: (String) -> Unit) {
         val ctx = appContext ?: return
         if (updateDownloading) return
+        // Гарантированно сохраняем профиль, моды и мир ПЕРЕД началом обновления!
+        try { onBeforeUpdateCallback?.invoke() } catch (_: Exception) {}
+
         val dlUrl = updateApkUrl
         if (dlUrl.isBlank()) {
             openBrowserUrl(REPO_RELEASES_URL)
@@ -246,7 +504,6 @@ object PlatformBridge {
             return
         }
 
-        // Проверяем право установки неизвестных приложений на Android 8+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ctx.packageManager.canRequestPackageInstalls()) {
             onStatus("Разрешите установку обновлений для VoxelHorizon и нажмите снова!")
             try {
@@ -263,7 +520,7 @@ object PlatformBridge {
         updateDownloading = true
         updateProgress = 0
         updateStatusText = "Загрузка обновления: 0%"
-        onStatus("Начата загрузка $updateTag прямо в игре...")
+        onStatus("Профиль сохранён! Загружаем $updateTag...")
 
         thread(isDaemon = true) {
             try {
@@ -319,10 +576,11 @@ object PlatformBridge {
                 if (outFile.exists()) outFile.delete()
                 tmpFile.renameTo(outFile)
 
+                try { onBeforeUpdateCallback?.invoke() } catch (_: Exception) {}
                 updateDownloading = false
                 updateProgress = 100
                 updateStatusText = "Загружено! Открываем установщик..."
-                onStatus("Обновление загружено! Подтвердите установку.")
+                onStatus("Обновление загружено! Профиль защищён.")
 
                 val installUri = Uri.parse(APK_PROVIDER_URI)
                 val installIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -353,19 +611,32 @@ object PlatformBridge {
     }
 }
 
-// Безопасный встроенный ContentProvider для установки скачанного APK без зависимостей AndroidX!
+// Безопасный встроенный ContentProvider для установки APK И отправки миров/модов друзьям!
 class ApkFileProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
-    private fun apkFile(): File? = context?.let { File(it.cacheDir, "voxelhorizon_update.apk") }
+    private fun resolveFile(uri: Uri): File? {
+        val ctx = context ?: return null
+        val path = uri.path ?: return File(ctx.cacheDir, "voxelhorizon_update.apk")
+        return if (path.startsWith("/export/")) {
+            val safe = File(path.removePrefix("/export/")).name
+            File(File(ctx.cacheDir, "export"), safe)
+        } else {
+            File(ctx.cacheDir, "voxelhorizon_update.apk")
+        }
+    }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
-        val f = apkFile() ?: throw java.io.FileNotFoundException("No context")
-        if (!f.exists()) throw java.io.FileNotFoundException("APK not downloaded")
+        val f = resolveFile(uri) ?: throw java.io.FileNotFoundException("No context")
+        if (!f.exists()) throw java.io.FileNotFoundException("File not found: ${f.name}")
         return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
-    override fun getType(uri: Uri): String = "application/vnd.android.package-archive"
+    override fun getType(uri: Uri): String {
+        val p = uri.path ?: ""
+        return if (p.endsWith(".apk", ignoreCase = true)) "application/vnd.android.package-archive"
+        else "application/octet-stream"
+    }
 
     override fun query(
         uri: Uri,
@@ -374,12 +645,12 @@ class ApkFileProvider : ContentProvider() {
         selectionArgs: Array<out String>?,
         sortOrder: String?
     ): Cursor {
-        val f = apkFile()
+        val f = resolveFile(uri)
         val cols = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         val cursor = MatrixCursor(cols)
         val row = Array<Any?>(cols.size) { i ->
             when (cols[i]) {
-                OpenableColumns.DISPLAY_NAME -> "VoxelHorizon-Update.apk"
+                OpenableColumns.DISPLAY_NAME -> f?.name ?: "VoxelHorizon.dat"
                 OpenableColumns.SIZE -> f?.length() ?: 0L
                 else -> null
             }

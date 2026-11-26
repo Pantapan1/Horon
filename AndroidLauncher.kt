@@ -1,6 +1,7 @@
 package com.voxelhorizon.nativegame
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -32,7 +33,12 @@ object GamepadBridge {
 }
 
 class AndroidLauncher : AndroidApplication() {
+    companion object {
+        private const val REQ_PICK_IMPORT_FILE = 902
+    }
+
     private var gameInstance: VoxelHorizonGame? = null
+    private lateinit var activeStorageRoot: File
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,16 +63,36 @@ class AndroidLauncher : AndroidApplication() {
             it.mkdirs(); File(it, "worlds").mkdirs(); File(it, "mods").mkdirs()
         }
         val storageRoot = if (canWriteDocs && publicMirror != null) {
+            migrateDirIfMissing(File(appRoot, "worlds"), File(publicMirror, "worlds"))
+            migrateDirIfMissing(File(appRoot, "mods"), File(publicMirror, "mods"))
             try {
-                File(appRoot, "worlds").listFiles()?.forEach { f ->
-                    val dst = File(File(publicMirror, "worlds"), f.name)
-                    if (f.isFile && !dst.exists()) f.copyTo(dst)
+                val srcP = File(appRoot, "profiles_v62.dat")
+                val dstP = File(publicMirror, "profiles_v62.dat")
+                if (srcP.isFile && (!dstP.exists() || srcP.lastModified() > dstP.lastModified())) {
+                    srcP.copyTo(dstP, overwrite = true)
                 }
             } catch (_: Exception) {}
             publicMirror
         } else appRoot
+        activeStorageRoot = storageRoot
 
-        PlatformBridge.init(this, publicMirror)
+        PlatformBridge.init(this, publicMirror, storageRoot)
+        PlatformBridge.onPickFileRequest = {
+            runOnUiThread {
+                try {
+                    val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                    }
+                    startActivityForResult(i, REQ_PICK_IMPORT_FILE)
+                } catch (_: Exception) {
+                    gameInstance?.showToast("Не удалось открыть проводник")
+                }
+            }
+        }
+
+        // Если игру открыли тапом по .vhworld / .vhmod / .lua / .vhpack в мессенджере или проводнике!
+        intent?.let { PlatformBridge.handleIncomingIntent(this, it, activeStorageRoot) }
 
         val config = AndroidApplicationConfiguration().apply {
             useAccelerometer = false
@@ -81,6 +107,32 @@ class AndroidLauncher : AndroidApplication() {
         gameInstance = game
         initialize(game, config)
         applyImmersiveFullscreen()
+    }
+
+    private fun migrateDirIfMissing(srcDir: File, dstDir: File) {
+        try {
+            dstDir.mkdirs()
+            srcDir.listFiles()?.forEach { f ->
+                val dst = File(dstDir, f.name)
+                if (f.isFile && !dst.exists()) f.copyTo(dst)
+            }
+        } catch (_: Exception) {}
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent != null && ::activeStorageRoot.isInitialized) {
+            PlatformBridge.handleIncomingIntent(this, intent, activeStorageRoot)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_PICK_IMPORT_FILE && resultCode == RESULT_OK && data?.data != null && ::activeStorageRoot.isInitialized) {
+            PlatformBridge.handleIncomingUri(this, data.data!!, activeStorageRoot)
+        }
     }
 
     private fun requestFirstLaunchPermissions() {
@@ -108,6 +160,7 @@ class AndroidLauncher : AndroidApplication() {
 
     override fun onStop() {
         super.onStop()
+        PlatformBridge.onBeforeUpdateCallback?.invoke()
         PlatformBridge.scheduleComeBackReminder(20)
     }
 

@@ -114,54 +114,92 @@ class ProfileManager(private val storageRoot: File) {
     private fun mirrorProfileFile(): File? = PlatformBridge.backupDir?.let { File(it, "profiles_v62.dat") }
     private fun worldIndexFile(): File = File(File(storageRoot, "worlds"), "worlds_index.dat")
 
+    private fun parseProfileSnapshot(text: String): Pair<Int, MutableList<PlayerProfile>> {
+        var actIdx = 0
+        val list = mutableListOf<PlayerProfile>()
+        try {
+            var cur: PlayerProfile? = null
+            for (raw in text.lines()) {
+                val line = raw.trim()
+                if (line.isEmpty()) continue
+                val p = line.split("|")
+                when (p[0]) {
+                    "ACTIVE" -> actIdx = p.getOrNull(1)?.toIntOrNull() ?: 0
+                    "PROF" -> if (p.size >= 7) {
+                        cur = PlayerProfile(
+                            friendId = p[1],
+                            nick = p[2],
+                            skinId = p[3],
+                            miningXp = p[4].toIntOrNull() ?: 0,
+                            combatXp = p[5].toIntOrNull() ?: 0,
+                            farmXp = p[6].toIntOrNull() ?: 0,
+                            activeQuestIdx = p.getOrNull(7)?.toIntOrNull() ?: 0,
+                            cloakId = p.getOrNull(8)?.toIntOrNull() ?: 0,
+                            enchAutoSmelt = p.getOrNull(9) == "1",
+                            enchFortune = p.getOrNull(10)?.toIntOrNull() ?: 0,
+                            enchFireAspect = p.getOrNull(11) == "1",
+                            enchLifesteal = p.getOrNull(12) == "1",
+                            enchHaste = p.getOrNull(13) == "1"
+                        )
+                        list += cur
+                    }
+                    "KILL" -> if (cur != null && p.size >= 3) cur.bestiaryKills[p[1]] = p[2].toIntOrNull() ?: 1
+                    "FRIEND" -> if (cur != null && p.size >= 3) cur.friends.add(FriendEntry(p[1], p[2]))
+                    "ACH" -> if (cur != null && p.size >= 2) cur.achievements.add(p[1])
+                }
+            }
+        } catch (_: Exception) {}
+        return Pair(actIdx, list)
+    }
+
+    private fun progressScore(list: List<PlayerProfile>): Long {
+        if (list.isEmpty()) return -1L
+        var score = list.size.toLong() * 50L
+        for (pr in list) {
+            score += (pr.miningXp + pr.combatXp + pr.farmXp).toLong()
+            score += pr.friends.size.toLong() * 80L
+            score += pr.achievements.size.toLong() * 120L
+            score += pr.bestiaryKills.values.sum().toLong() * 10L
+            if (!pr.nick.startsWith("Игрок_")) score += 200L
+        }
+        return score
+    }
+
     fun loadAll() {
         profiles.clear()
+        // Проверяем ВСЕ 4 резервных хранилища (SharedPreferences, filesDir, storageRoot, Documents) и берём самое полное/свежее!
+        val candidates = mutableListOf<Pair<String, Long>>()
         val fPrimary = primaryProfileFile()
+        if (fPrimary.exists() && fPrimary.length() > 10) {
+            try { candidates += Pair(fPrimary.readText(Charsets.UTF_8), fPrimary.lastModified()) } catch (_: Exception) {}
+        }
         val fMirror = mirrorProfileFile()
-        val src = when {
-            fPrimary.exists() && fPrimary.length() > 10 -> fPrimary
-            fMirror != null && fMirror.exists() && fMirror.length() > 10 -> fMirror
-            else -> null
+        if (fMirror != null && fMirror.exists() && fMirror.length() > 10) {
+            try { candidates += Pair(fMirror.readText(Charsets.UTF_8), fMirror.lastModified()) } catch (_: Exception) {}
         }
-        if (src != null) {
-            try {
-                var cur: PlayerProfile? = null
-                for (raw in src.readLines(Charsets.UTF_8)) {
-                    val line = raw.trim()
-                    if (line.isEmpty()) continue
-                    val p = line.split("|")
-                    when (p[0]) {
-                        "ACTIVE" -> activeIndex = p.getOrNull(1)?.toIntOrNull() ?: 0
-                        "PROF" -> if (p.size >= 7) {
-                            cur = PlayerProfile(
-                                friendId = p[1],
-                                nick = p[2],
-                                skinId = p[3],
-                                miningXp = p[4].toIntOrNull() ?: 0,
-                                combatXp = p[5].toIntOrNull() ?: 0,
-                                farmXp = p[6].toIntOrNull() ?: 0,
-                                activeQuestIdx = p.getOrNull(7)?.toIntOrNull() ?: 0,
-                                cloakId = p.getOrNull(8)?.toIntOrNull() ?: 0,
-                                enchAutoSmelt = p.getOrNull(9) == "1",
-                                enchFortune = p.getOrNull(10)?.toIntOrNull() ?: 0,
-                                enchFireAspect = p.getOrNull(11) == "1",
-                                enchLifesteal = p.getOrNull(12) == "1",
-                                enchHaste = p.getOrNull(13) == "1"
-                            )
-                            profiles += cur
-                        }
-                        "KILL" -> if (cur != null && p.size >= 3) cur.bestiaryKills[p[1]] = p[2].toIntOrNull() ?: 1
-                        "FRIEND" -> if (cur != null && p.size >= 3) cur.friends.add(FriendEntry(p[1], p[2]))
-                        "ACH" -> if (cur != null && p.size >= 2) cur.achievements.add(p[1])
-                    }
-                }
-            } catch (_: Exception) {}
+        candidates.addAll(PlatformBridge.loadProfileVaultCandidates())
+
+        var bestAct = 0
+        var bestList: MutableList<PlayerProfile>? = null
+        var bestScore = -1L
+        var bestTs = -1L
+        for ((txt, ts) in candidates) {
+            val (aIdx, parsed) = parseProfileSnapshot(txt)
+            if (parsed.isEmpty()) continue
+            val sc = progressScore(parsed)
+            if (sc > bestScore || (sc == bestScore && ts > bestTs)) {
+                bestScore = sc; bestTs = ts; bestAct = aIdx; bestList = parsed
+            }
         }
-        if (profiles.isEmpty()) {
+        if (bestList != null) {
+            profiles.addAll(bestList)
+            activeIndex = bestAct.coerceIn(0, profiles.lastIndex)
+            // Синхронизируем восстановленный профиль во все хранилища, чтобы не потерялся!
+            saveProfiles()
+        } else {
             createDefaultProfile()
             saveProfiles()
         }
-        activeIndex = activeIndex.coerceIn(0, profiles.lastIndex)
         loadWorldSlots()
     }
 
@@ -245,6 +283,7 @@ class ProfileManager(private val storageRoot: File) {
         try {
             mirrorProfileFile()?.let { mf -> mf.parentFile?.mkdirs(); mf.writeText(text, Charsets.UTF_8) }
         } catch (_: Exception) {}
+        PlatformBridge.saveProfileVault(text)
     }
 
     // === MULTI-WORLD SLOTS ===

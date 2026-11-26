@@ -231,7 +231,13 @@ data class MobEntity(
     var netTargetY: Float = y,
     var netTargetZ: Float = z,
     var hasNetTarget: Boolean = false,
-    var fleeTimer: Float = 0f
+    var fleeTimer: Float = 0f,
+    var customDamage: Float = 0f,
+    var customSpeed: Float = 0f,
+    var customTintHex: Int = 0xFFFFFF,
+    var customDropId: Int = 0,
+    var customDropCount: Int = 1,
+    var customRangedStyle: Int = 0 // 0=melee, 1=fire, 2=frost
 )
 
 data class DroppedItem(
@@ -828,9 +834,10 @@ class EntityAndWeatherManager {
             val aggro = m.hostile && !player.creative && distP < (if (m.isBoss) 18f else 11f) && abs(player.z - m.z) < 4.5f
             if (aggro) {
                 val ang = atan2((player.y - m.y).toDouble(), (player.x - m.x).toDouble()).toFloat()
-                val ranged = m.type in setOf("skeleton", "blaze", "ghast", "inferno_lord", "sky_guardian", "frost_titan")
+                val ranged = m.customRangedStyle > 0 || m.type in setOf("skeleton", "blaze", "ghast", "inferno_lord", "sky_guardian", "frost_titan")
                 val zombieNightBoost = if (m.type == "zombie" && dayFactor < 0.25f) 1.32f else 1.0f
-                val spd = (if (m.isBoss) 3.0f else if (m.type in setOf("spider", "enderman", "goblin", "bat")) 3.4f else 2.3f) * slowMult * zombieNightBoost
+                val baseSpd = if (m.customSpeed > 0.1f) m.customSpeed else if (m.isBoss) 3.0f else if (m.type in setOf("spider", "enderman", "goblin", "bat")) 3.4f else 2.3f
+                val spd = baseSpd * slowMult * zombieNightBoost
 
                 if (m.type == "grove_guardian" && m.atkCd <= 0f && distP < 12f) {
                     m.atkCd = 3.2f; m.attackAnim = 1.0f
@@ -868,7 +875,10 @@ class EntityAndWeatherManager {
                     spawnBlockParticles(floor(m.x).toInt(), floor(m.y).toInt(), floor(m.z).toInt(), 0xFF6818, 8)
                 } else if (ranged && distP < 9.5f && m.atkCd <= 0f) {
                     m.atkCd = if (m.isBoss) 1.8f else 2.2f; m.attackAnim = 1.0f
-                    fireProjectile(m.x, m.y, m.z, player.x - m.x, player.y - m.y, if (m.isBoss) 5f else 3f, m.type != "skeleton", false, false)
+                    val rDmg = if (m.customDamage > 0f) m.customDamage else if (m.isBoss) 5f else 3f
+                    val isF = if (m.customRangedStyle > 0) m.customRangedStyle == 1 else (m.type != "skeleton")
+                    val isI = m.customRangedStyle == 2
+                    fireProjectile(m.x, m.y, m.z, player.x - m.x, player.y - m.y, rDmg, isF, isI, false)
                 } else if (m.type == "creeper" && distP < 1.8f) {
                     m.fuse += dt
                     if (m.fuse >= 1.25f) {
@@ -884,7 +894,7 @@ class EntityAndWeatherManager {
                     }
                     if (!ranged && distP < 1.25f && m.atkCd <= 0f) {
                         m.atkCd = 1.05f; m.attackAnim = 1.0f
-                        val hitDmg = (when (m.type) { "yeti", "crystal_golem", "mimic" -> 6f; "enderman" -> 5f; else -> 3f }) * (if (m.isDeepMob) 1.25f else 1f)
+                        val hitDmg = (if (m.customDamage > 0f) m.customDamage else when (m.type) { "yeti", "crystal_golem", "mimic" -> 6f; "enderman" -> 5f; else -> 3f }) * (if (m.isDeepMob) 1.25f else 1f)
                         onHurtPlayer(hitDmg, m)
                     }
                 }
