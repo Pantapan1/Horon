@@ -264,7 +264,7 @@ object PlatformBridge {
                                     .replace(Regex("\\s*\\(\\d+\\)$"), "")
                                     .replace(Regex("[_\\-]?v?\\d+(\\.\\d+)*$", RegexOption.IGNORE_CASE), "")
                             }
-                            val cleanId = mIdRaw.lowercase().replace(Regex("[^a-z0-9_\-]"), "_").trim('_').ifBlank { "mod_${System.currentTimeMillis()}" }
+                            val cleanId = mIdRaw.lowercase().replace(Regex("[^a-z0-9_\\-]"), "_").trim('_').ifBlank { "mod_${System.currentTimeMillis()}" }
                             val mName = extractJsonString(manifestJson, "name").ifBlank { cleanId }
                             val newVer = extractJsonString(manifestJson, "version").ifBlank { "1.0" }
                             val dst = File(modsDir, "$cleanId.vhpack")
@@ -290,7 +290,7 @@ object PlatformBridge {
                                             val oe = oz.getEntry("manifest.json")
                                             if (oe != null) {
                                                 val oj = oz.getInputStream(oe).bufferedReader(Charsets.UTF_8).readText()
-                                                val oid = extractJsonString(oj, "id").lowercase().replace(Regex("[^a-z0-9_\-]"), "_").trim('_')
+                                                val oid = extractJsonString(oj, "id").lowercase().replace(Regex("[^a-z0-9_\\-]"), "_").trim('_')
                                                 if (oid == cleanId) {
                                                     if (oldVer.isBlank()) oldVer = extractJsonString(oj, "version")
                                                     oldF.delete()
