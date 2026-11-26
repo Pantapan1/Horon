@@ -67,7 +67,9 @@ class PlayerState {
     var stepDustTimer = 0f
 
     var selectedSlot = 0
-    var skinId = "fox_officer"
+    var skinId = "chibi_scarf"
+    var activeEmoteIdx = -1
+    var emoteTimer = 0f
     var spawnX = 0.5f; var spawnY = 0.5f; var spawnZ = 142.0f; var spawnDim = "overworld"
 
     val slots = arrayOfNulls<SlotItem>(INV_SIZE)

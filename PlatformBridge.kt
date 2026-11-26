@@ -42,8 +42,8 @@ data class ImportedFileEvent(
 )
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.9.1"
-    const val CURRENT_TAG = "v6.9-rust-latest"
+    const val CURRENT_VERSION = "6.11.0"
+    const val CURRENT_TAG = "v6.11-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
     const val PROVIDER_AUTHORITY = "com.voxelhorizon.nativegame.apkprovider"
@@ -232,44 +232,85 @@ object PlatformBridge {
                         pendingImports.add(ImportedFileEvent("lua_mod", fn.removeSuffix(".lua"), dst))
                     }
                     lower.endsWith(".vhpack") || lower.endsWith(".zip") || isZipMagic -> {
-                        // Умный разбор ZIP / .vhpack: ищем внутри .vhworld, .vhmod или main.lua!
+                        // Версионированный импорт .vhpack / .zip (читаем manifest.json -> обновляем БЕЗ ДУБЛЕЙ!)
                         var hasMainLua = false
+                        var hasVhmod = false
+                        var manifestJson = ""
                         var extractedWorld: File? = null
-                        var extractedNoCode: File? = null
                         ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
                             while (true) {
                                 val e = zis.nextEntry ?: break
                                 val en = e.name.lowercase()
-                                if (en == "main.lua" || en == "scripts/main.lua") {
+                                if (en == "manifest.json" || en.endsWith("/manifest.json")) {
+                                    manifestJson = String(zis.readBytes(), Charsets.UTF_8)
+                                } else if (en == "main.lua" || en == "scripts/main.lua") {
                                     hasMainLua = true
+                                } else if (en.endsWith(".vhmod") && !e.isDirectory) {
+                                    hasVhmod = true
                                 } else if (en.endsWith(".vhworld") && !e.isDirectory) {
                                     val wName = sanitizeFileName(File(e.name).name, ".vhworld")
                                     val outW = File(worldsDir, wName)
                                     outW.writeBytes(zis.readBytes())
                                     extractedWorld = outW
-                                } else if ((en.endsWith(".vhmod") || en.endsWith("nocode_mods_v69.dat")) && !e.isDirectory) {
-                                    val mName = sanitizeFileName(File(e.name).name, ".vhmod")
-                                    val outM = File(modsDir, mName)
-                                    outM.writeBytes(zis.readBytes())
-                                    extractedNoCode = outM
                                 }
                             }
                         }
                         if (extractedWorld != null) {
                             pendingImports.add(ImportedFileEvent("world", extractedWorld!!.nameWithoutExtension, extractedWorld))
                         }
-                        if (extractedNoCode != null) {
-                            pendingImports.add(ImportedFileEvent("nocode_mod", extractedNoCode!!.nameWithoutExtension, extractedNoCode))
-                        }
-                        if (hasMainLua || (extractedWorld == null && extractedNoCode == null)) {
-                            val fn = sanitizeFileName(rawName, ".vhpack")
-                            val dst = File(modsDir, fn)
+                        if (hasMainLua || hasVhmod || manifestJson.isNotEmpty() || extractedWorld == null) {
+                            val mIdRaw = extractJsonString(manifestJson, "id").ifBlank {
+                                rawName.removeSuffix(".vhpack").removeSuffix(".zip")
+                                    .replace(Regex("\\s*\\(\\d+\\)$"), "")
+                                    .replace(Regex("[_\\-]?v?\\d+(\\.\\d+)*$", RegexOption.IGNORE_CASE), "")
+                            }
+                            val cleanId = mIdRaw.lowercase().replace(Regex("[^a-z0-9_\-]"), "_").trim('_').ifBlank { "mod_${System.currentTimeMillis()}" }
+                            val mName = extractJsonString(manifestJson, "name").ifBlank { cleanId }
+                            val newVer = extractJsonString(manifestJson, "version").ifBlank { "1.0" }
+                            val dst = File(modsDir, "$cleanId.vhpack")
+
+                            // Проверяем предыдущую версию, если этот мод уже установлен!
+                            var oldVer = ""
+                            if (dst.exists()) {
+                                try {
+                                    java.util.zip.ZipFile(dst).use { oz ->
+                                        val oe = oz.getEntry("manifest.json")
+                                        if (oe != null) {
+                                            val oldJson = oz.getInputStream(oe).bufferedReader(Charsets.UTF_8).readText()
+                                            oldVer = extractJsonString(oldJson, "version")
+                                        }
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                            // Удаляем старые копии с тем же manifest.id под другими именами файлов (напр. Music_vhpack.zip)
+                            modsDir.listFiles()?.forEach { oldF ->
+                                if (oldF.isFile && oldF.canonicalPath != dst.canonicalPath && (oldF.name.endsWith(".vhpack") || oldF.name.endsWith(".zip"))) {
+                                    try {
+                                        java.util.zip.ZipFile(oldF).use { oz ->
+                                            val oe = oz.getEntry("manifest.json")
+                                            if (oe != null) {
+                                                val oj = oz.getInputStream(oe).bufferedReader(Charsets.UTF_8).readText()
+                                                val oid = extractJsonString(oj, "id").lowercase().replace(Regex("[^a-z0-9_\-]"), "_").trim('_')
+                                                if (oid == cleanId) {
+                                                    if (oldVer.isBlank()) oldVer = extractJsonString(oj, "version")
+                                                    oldF.delete()
+                                                }
+                                            }
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                            }
+
                             dst.writeBytes(bytes)
-                            pendingImports.add(ImportedFileEvent("vhpack", fn.removeSuffix(".vhpack"), dst))
+                            val msg = if (oldVer.isNotBlank()) "Мод «$mName» обновлён: v$oldVer -> v$newVer!" else "Мод «$mName» v$newVer установлен!"
+                            pendingImports.add(ImportedFileEvent("vhpack", mName, dst, msg))
                         }
                     }
                     else -> {
-                        pendingImports.add(ImportedFileEvent("error", rawName, null, "Неподдерживаемый файл: $rawName (нужен .vhworld, .vhmod, .lua или .vhpack)"))
+                        val fn = sanitizeFileName(rawName, ".dat")
+                        val dst = File(File(modsDir, "inbox").also { it.mkdirs() }, fn)
+                        dst.writeBytes(bytes)
+                        pendingImports.add(ImportedFileEvent("mod_file", rawName, dst, "Файл $rawName передан модам!"))
                     }
                 }
             } catch (e: Exception) {
@@ -394,7 +435,7 @@ object PlatformBridge {
         } catch (_: Exception) {}
     }
 
-    private fun extractJsonString(json: String, key: String): String {
+    fun extractJsonString(json: String, key: String): String {
         val pat = "\"$key\""
         val idx = json.indexOf(pat)
         if (idx < 0) return ""

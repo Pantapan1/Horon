@@ -42,7 +42,7 @@ data class ActiveQuest(
 data class PlayerProfile(
     val friendId: String,
     var nick: String,
-    var skinId: String = "fox_officer",
+    var skinId: String = "chibi_scarf",
     var miningXp: Int = 0,
     var combatXp: Int = 0,
     var farmXp: Int = 0,
@@ -129,7 +129,7 @@ class ProfileManager(private val storageRoot: File) {
                         cur = PlayerProfile(
                             friendId = p[1],
                             nick = p[2],
-                            skinId = p[3],
+                            skinId = when (p[3]) { "fox_officer" -> "chibi_fox"; "estelle_cmd" -> "chibi_music"; "luna_cat" -> "chibi_cat"; "shadow_knight" -> "chibi_knight"; "emerald_scout" -> "chibi_witch"; "classic" -> "chibi_classic"; else -> p[3] },
                             miningXp = p[4].toIntOrNull() ?: 0,
                             combatXp = p[5].toIntOrNull() ?: 0,
                             farmXp = p[6].toIntOrNull() ?: 0,
@@ -205,14 +205,14 @@ class ProfileManager(private val storageRoot: File) {
 
     private fun createDefaultProfile() {
         val fid = "VH-${Random.nextInt(10000, 99999)}"
-        profiles += PlayerProfile(fid, "Игрок_${fid.takeLast(3)}", "fox_officer")
+        profiles += PlayerProfile(fid, "Игрок_${fid.takeLast(3)}", "chibi_scarf")
         activeIndex = profiles.lastIndex
     }
 
     fun createProfile(nickRaw: String): PlayerProfile {
         val nick = nickRaw.trim().replace("|", "").take(18).ifBlank { "Герой_${Random.nextInt(10, 99)}" }
         val fid = "VH-${Random.nextInt(10000, 99999)}"
-        val pr = PlayerProfile(fid, nick, "fox_officer")
+        val pr = PlayerProfile(fid, nick, "chibi_scarf")
         profiles += pr
         activeIndex = profiles.lastIndex
         saveProfiles()

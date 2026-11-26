@@ -73,6 +73,8 @@ object BlockRegistry {
     private var nextModTile = 84
     private val customBlockTiles = HashMap<Int, Int>()
     private val customItemTextures = HashMap<Int, Texture>()
+    val customPropRegions = ConcurrentHashMap<Int, TextureRegion>()
+    private val customPropTextures = HashMap<Int, Texture>()
     private var baseRecipeCount = 0
 
     fun init() {
@@ -735,6 +737,106 @@ object BlockRegistry {
         }
     }
 
+    fun registerModRecipe(
+        outId: Int, outCount: Int, req: List<Pair<Int, Int>>,
+        desc: String, pocket2x2: Boolean = false, campfireBrew: Boolean = false, category: String = "build"
+    ) {
+        recipes += RecipeDef(outId, outCount.coerceAtLeast(1), req, desc, pocket2x2, campfireBrew, category)
+    }
+
+    fun registerModBlockEx(
+        id: Int, name: String, pngBytes: ByteArray?,
+        solid: Boolean = true, transparent: Boolean = false, isProp: Boolean = false,
+        lightRadius: Float = 0f, lightColor: Int = 0xFFE688,
+        hardness: Float = 1.0f, dropId: Int = id,
+        interactive: String = "", colorHex: Int = 0x4CE4FF
+    ): Int {
+        val tid = if (isProp) -1 else customBlockTiles.getOrPut(id) {
+            if (nextModTile < ATLAS_COLS * ATLAS_ROWS - 1) nextModTile++ else 84 + (id % 36)
+        }
+        val finalDrop = if (dropId > 0) dropId else id
+        items[id] = ItemDef(
+            id = id, name = name, solid = solid, transparent = transparent || isProp,
+            isProp = isProp, propIdx = -1,
+            lightRadius = lightRadius, lightColor = lightColor,
+            hardness = hardness, dropId = finalDrop,
+            toolType = "pick", topTile = tid, sideTile = tid,
+            colorHex = colorHex, interactive = interactive
+        )
+
+        if (isProp) {
+            if (pngBytes != null && pngBytes.isNotEmpty()) {
+                Gdx.app.postRunnable {
+                    try {
+                        val pm = Pixmap(pngBytes, 0, pngBytes.size)
+                        val t = Texture(pm).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest) }
+                        pm.dispose()
+                        customPropTextures.remove(id)?.dispose()
+                        customPropTextures[id] = t
+                        val reg = TextureRegion(t)
+                        customPropRegions[id] = reg
+                        iconRegions[id] = reg
+                    } catch (_: Exception) {}
+                }
+            }
+            RustEngine.nativeRegisterModBlockEx(id, -1, -1, colorHex, solid, true, true, lightRadius, lightColor)
+        } else {
+            val tx = (tid % ATLAS_COLS) * TILE_PX
+            val ty = (tid / ATLAS_COLS) * TILE_PX
+            if (pngBytes != null && pngBytes.isNotEmpty()) {
+                try {
+                    val src = Pixmap(pngBytes, 0, pngBytes.size)
+                    atlasPixmap.blending = Pixmap.Blending.None
+                    atlasPixmap.drawPixmap(src, 0, 0, src.width, src.height, tx, ty, TILE_PX, TILE_PX)
+                    src.dispose()
+                } catch (_: Exception) {
+                    val col = Color(((colorHex shr 16) and 0xFF) / 255f, ((colorHex shr 8) and 0xFF) / 255f, (colorHex and 0xFF) / 255f, 1f)
+                    atlasPixmap.setColor(col); atlasPixmap.fillRectangle(tx, ty, TILE_PX, TILE_PX)
+                }
+            } else {
+                val col = Color(((colorHex shr 16) and 0xFF) / 255f, ((colorHex shr 8) and 0xFF) / 255f, (colorHex and 0xFF) / 255f, 1f)
+                atlasPixmap.setColor(col); atlasPixmap.fillRectangle(tx, ty, TILE_PX, TILE_PX)
+                atlasPixmap.setColor(col.cpy().mul(0.72f)); atlasPixmap.drawRectangle(tx, ty, TILE_PX, TILE_PX)
+            }
+            Gdx.app.postRunnable { if (::atlasTexture.isInitialized) atlasTexture.draw(atlasPixmap, 0, 0) }
+            iconRegions[id] = TextureRegion(atlasTexture, tx, ty, TILE_PX, TILE_PX)
+            RustEngine.nativeRegisterModBlockEx(id, tid, tid, colorHex, solid, transparent, false, lightRadius, lightColor)
+        }
+        return tid
+    }
+
+    fun registerModItemEx(
+        id: Int, name: String, pngBytes: ByteArray?,
+        kind: String = "", damage: Int = 3, mineSpeed: Float = 1.0f, durability: Int = 0,
+        healHp: Int = 0, healFood: Int = 0, aoeMine: Boolean = false,
+        armorSlot: Int = -1, armorDef: Int = 0, colorHex: Int = 0xFFFFFF
+    ) {
+        val toolType = when (kind) { "pick" -> "pick"; "axe" -> "axe"; "shovel" -> "shovel"; else -> "" }
+        val weaponStyle = when (kind) {
+            "sword" -> "katana"; "staff" -> "staff_amethyst"; "fire_staff" -> "staff_fire"
+            "bow" -> "bow"; "hammer" -> "hammer"; "frost" -> "frost"; "ruby" -> "ruby"; else -> ""
+        }
+        items[id] = ItemDef(
+            id = id, name = name, isItem = true, colorHex = colorHex,
+            toolType = toolType, weaponStyle = weaponStyle,
+            damage = damage, mineSpeed = mineSpeed, aoeMine = aoeMine,
+            healFood = healFood, healHp = healHp,
+            armorSlot = armorSlot, armorDef = armorDef, maxDurability = durability
+        )
+        if (pngBytes != null && pngBytes.isNotEmpty()) {
+            Gdx.app.postRunnable {
+                try {
+                    val pm = Pixmap(pngBytes, 0, pngBytes.size)
+                    val t = Texture(pm).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest) }
+                    pm.dispose()
+                    customItemTextures.remove(id)?.dispose()
+                    customItemTextures[id] = t
+                    iconRegions[id] = TextureRegion(t)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     fun registerModBlock(id: Int, name: String, r: Float, g: Float, b: Float): Int {
         val tid = if (nextModTile < ATLAS_COLS * ATLAS_ROWS - 1) nextModTile++ else 16
         val tx = (tid % ATLAS_COLS) * TILE_PX; val ty = (tid / ATLAS_COLS) * TILE_PX
@@ -755,5 +857,6 @@ object BlockRegistry {
         itemsTexture1?.dispose(); itemsTexture2?.dispose(); itemsTexture3?.dispose()
         itemsTexture4?.dispose(); itemsTexture5?.dispose()
         for (t in customItemTextures.values) t.dispose(); customItemTextures.clear()
+        for (t in customPropTextures.values) t.dispose(); customPropTextures.clear(); customPropRegions.clear()
     }
 }

@@ -95,6 +95,35 @@ pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeRegiste
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeRegisterModBlockEx<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    id: jint,
+    top_tile: jint,
+    side_tile: jint,
+    color_hex: jint,
+    solid: jboolean,
+    transparent: jboolean,
+    is_prop: jboolean,
+    light_radius: jfloat,
+    light_color: jint,
+) {
+    with_world(|w| {
+        w.register_mod_block_ex(
+            id,
+            top_tile,
+            side_tile,
+            color_hex,
+            solid != 0,
+            transparent != 0,
+            is_prop != 0,
+            light_radius,
+            light_color,
+        )
+    });
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_voxelhorizon_nativegame_RustEngine_nativeGetBlock<'local>(
     _env: JNIEnv<'local>,
     _class: JClass<'local>,

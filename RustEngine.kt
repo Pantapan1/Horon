@@ -12,6 +12,7 @@ object RustEngine {
     @JvmStatic external fun nativeClearMods()
     @JvmStatic external fun nativePutMod(dim: Int, x: Int, y: Int, z: Int, id: Int)
     @JvmStatic external fun nativeRegisterModBlock(id: Int, tileIdx: Int, colorHex: Int)
+    @JvmStatic external fun nativeRegisterModBlockEx(id: Int, topTile: Int, sideTile: Int, colorHex: Int, solid: Boolean, transparent: Boolean, isProp: Boolean, lightRadius: Float, lightColor: Int)
 
     @JvmStatic external fun nativeGetBlock(x: Int, y: Int, z: Int): Int
     @JvmStatic external fun nativeSetBlock(x: Int, y: Int, z: Int, id: Int)

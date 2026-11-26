@@ -14,6 +14,7 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont
 import com.badlogic.gdx.graphics.g2d.GlyphLayout
 import com.badlogic.gdx.graphics.g2d.NinePatch
 import com.badlogic.gdx.graphics.g2d.SpriteBatch
+import com.badlogic.gdx.graphics.g2d.TextureRegion
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer
 import com.badlogic.gdx.math.Rectangle
@@ -33,7 +34,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 enum class UiScreen {
-    MAIN_MENU, WORLD_SLOTS, PROFILES_FRIENDS, PLAYING, PAUSE, INVENTORY, WORKBENCH, FURNACE, CHEST, CAMPFIRE, WAYSTONES, ANVIL, TRADER_QUESTS, BESTIARY_SKILLS, FULL_MAP, ENCHANTING, ACHIEVEMENTS, GOLEM_BAG, MOD_STUDIO, SETTINGS_MODHUB, WARDROBE, MULTIPLAYER, DEATH
+    MAIN_MENU, WORLD_SLOTS, PROFILES_FRIENDS, PLAYING, PAUSE, INVENTORY, WORKBENCH, FURNACE, CHEST, CAMPFIRE, WAYSTONES, ANVIL, TRADER_QUESTS, BESTIARY_SKILLS, FULL_MAP, ENCHANTING, ACHIEVEMENTS, GOLEM_BAG, MOD_STUDIO, MOD_CUSTOM_UI, SETTINGS_MODHUB, WARDROBE, MULTIPLAYER, DEATH
 }
 
 data class IsoPick(val gx: Int, val gy: Int, val gz: Int, val id: Int)
@@ -221,6 +222,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     private var openChestPos: Triple<Int, Int, Int>? = null
     private var invSelectedSlot = -1
     private var settingsTab = 0
+    private var modsPage = 0
+    private var wardrobePage = 0
+    private var wardrobeEmoteTest = -1
+    private var emotePickerOpen = false
+    var activeModScreenId = ""
 
     private val weatherDrops = Array(64) { floatArrayOf(Random.nextFloat(), Random.nextFloat(), 0.7f + Random.nextFloat() * 0.6f) }
     private val buttons = mutableListOf<Pair<Rectangle, () -> Unit>>()
@@ -424,6 +430,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         Gdx.app.postRunnable {
             chatLog.addLast(Pair(line, 12f))
             while (chatLog.size > 5) chatLog.removeFirst()
+            val sep = line.indexOf(": ")
+            if (sep > 0) luaMods.emitChat(line.substring(0, sep), line.substring(sep + 2))
         }
     }
 
@@ -455,7 +463,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun updateOstMusic() {
-        if (!soundEnabled || screen == UiScreen.MAIN_MENU) { bgMusic?.stop(); currentOst = ""; return }
+        if (!soundEnabled || screen == UiScreen.MAIN_MENU || ModAudioEngine.forceMuteOst || (ModAudioEngine.isPlaying && (ModAudioEngine.playInWorldBg || screen == UiScreen.MOD_CUSTOM_UI))) { bgMusic?.stop(); currentOst = ""; return }
         val isDeep = world.dimension == "overworld" && player.z < WorldIso.SEA_Z - 5
         val nearTrader = entities.mobs.any { it.type == "trader" && hypot((it.x - player.x).toDouble(), (it.y - player.y).toDouble()) < 18.0 }
         val target = when {
@@ -584,6 +592,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val dm = modStudio.worldRules.dropMult.coerceIn(1, 5)
         if (dm > 1) { for (i in dropsToSpawn.indices) dropsToSpawn[i] = dropsToSpawn[i].first to (dropsToSpawn[i].second * dm) }
         modStudio.fireTrigger(2, this)
+        luaMods.emitMobKill(dead.type, dead.name, dead.x, dead.y, dead.z, dead.isBoss)
         for ((dId, dCnt) in dropsToSpawn) {
             entities.spawnDrop(dId, dCnt, dead.x + (Random.nextFloat() - 0.5f) * 0.4f, dead.y + (Random.nextFloat() - 0.5f) * 0.4f, dead.z)
         }
@@ -716,6 +725,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             SoundFx.play(if (placeId == 180 || placeId == 181) "wall_torch" else "mine", 0.45f)
             lastPlacedX = gx; lastPlacedY = gy; lastPlacedZ = tz; lastPlacedId = placeId; lastPlacedTime = elapsed
             modStudio.fireTrigger(1, this)
+            luaMods.emitBlockPlace(gx, gy, tz, placeId)
             if (oldCount <= 1 && player.slots[player.selectedSlot] == null) {
                 for (bi in 9 until PlayerState.INV_SIZE) {
                     val bs = player.slots[bi]
@@ -772,7 +782,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         "altar" -> "АЛТАРЬ БОССА"
         "portal" -> "ПОРТАЛ В АД"
         "mimic" -> "ОТКРЫТЬ СУНДУК"
-        else -> "ДЕЙСТВИЕ"
+        else -> {
+            val inter = BlockRegistry.items[id]?.interactive ?: ""
+            if (inter.isNotEmpty() && !inter.startsWith("mod_")) inter.uppercase()
+            else BlockRegistry.items[id]?.name?.uppercase() ?: "ДЕЙСТВИЕ"
+        }
     }
 
     private fun updateAutoAttack(dt: Float) {
@@ -921,6 +935,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     }
 
     private fun useConsumableOrSpecial(held: SlotItem): Boolean {
+        if (luaMods.emitItemUse(held.id, player.x, player.y, player.z)) return true
         val hDef = BlockRegistry.items[held.id] ?: return false
         when (held.id) {
             133 -> if (player.takeItem(133, 1)) { player.maxHp += 4f; player.hp = player.maxHp; showToast("Сердце Леса: Макс. HP ${player.maxHp.toInt()}!"); return true }
@@ -1157,7 +1172,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val hDef = held?.let { BlockRegistry.items[it.id] }
         val dist = hypot((pick.gx + 0.5f - player.x).toDouble(), (pick.gy + 0.5f - player.y).toDouble())
 
-        if (dist <= 4.0 && pick.id > 0) {
+        if (dist <= 4.5 && pick.id > 0) {
+            if (luaMods.emitBlockInteract(pick.gx, pick.gy, pick.gz, pick.id, held?.id ?: 0)) return
             when (BlockRegistry.items[pick.id]?.interactive) {
                 "craft" -> { screen = UiScreen.WORKBENCH; return }
                 "smelt" -> { openFurnacePos = Triple(pick.gx, pick.gy, pick.gz); screen = UiScreen.FURNACE; return }
@@ -1564,6 +1580,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
     private fun damagePlayer(raw: Float, attacker: MobEntity?) {
         if (player.creative || modStudio.worldRules.godMode || raw <= 0f) return
+        if (!luaMods.emitPlayerDamage(raw)) return
         if (player.isSleeping) { player.isSleeping = false; showToast("Вас разбудил враг!") }
         if (player.parryTimer > 0f) {
             player.parryTimer = 0f
@@ -1766,6 +1783,14 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         if (player.dashCooldown > 0f) player.dashCooldown = max(0f, player.dashCooldown - dt)
         if (player.foodCooldown > 0f) player.foodCooldown = max(0f, player.foodCooldown - dt)
         if (player.attackAnim > 0f) player.attackAnim = max(0f, player.attackAnim - dt * 5f)
+        if (player.isMoving && player.activeEmoteIdx == 4) {
+            player.activeEmoteIdx = -1; player.emoteTimer = 0f
+            if (netMp.isConnected) netMp.broadcastEmote(-1)
+        }
+        if (player.emoteTimer > 0f && player.activeEmoteIdx != 4) {
+            player.emoteTimer = max(0f, player.emoteTimer - dt)
+            if (player.emoteTimer <= 0f) player.activeEmoteIdx = -1
+        }
     }
 
     override fun render() {
@@ -1798,7 +1823,12 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 "lua_mod", "vhpack" -> {
                     luaMods.hotReload()
                     SoundFx.play("levelup", 0.75f)
-                    showToast("Мод «${ev.name}» импортирован и включён!")
+                    showToast(ev.message.ifBlank { "Мод «${ev.name}» импортирован и включён!" })
+                }
+                "mod_file" -> {
+                    val txt = try { ev.file?.readText(Charsets.UTF_8) ?: "" } catch (_: Exception) { "" }
+                    luaMods.emitFileImport(ev.name, txt)
+                    showToast(ev.message.ifBlank { "Файл «${ev.name}» передан модам!" })
                 }
                 else -> if (ev.message.isNotEmpty()) showToast(ev.message)
             }
@@ -1811,6 +1841,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             updateDecayingLeaves(dt)
             redstone.update(dt, this)
             modStudio.tick(dt, this)
+            luaMods.emitTick(dt)
         }
 
         if (screen == UiScreen.PLAYING) {
@@ -1998,7 +2029,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         // Шлейфы рывка
         for (dg in entities.dashGhosts) {
             val gx = isoToScreenX(dg.x, dg.y); val gy = isoToScreenY(dg.x, dg.y, dg.z)
-            val reg = SpriteArt.skinSprites[dg.skinId]?.get(1) ?: continue
+            val reg = SpriteArt.getSkinFrames(dg.skinId)[1]
             spriteBatch.setColor(0.45f, 0.88f, 1f, (dg.life / 0.28f) * 0.55f)
             spriteBatch.draw(reg, gx - 32f, gy - 12f, 32f, 12f, 64f, 80f, if (dg.facingRight) 1f else -1f, 1f, 0f)
         }
@@ -2031,12 +2062,13 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     37 -> animFrame; 34 -> 5 + animFrame; 59 -> 11 + animFrame; 80 -> 28 + animFrame; 86 -> 36 + animFrame; 85 -> if (redstone.isButtonActive(gx, gy, gz)) 35 else 34; 87 -> if (redstone.isPowered(gx, gy, gz)) 39 else 38; 180 -> 43 + animFrame; 181 -> 45 + animFrame; 186 -> if (redstone.isPowered(gx, gy, gz)) 52 else 51; 187 -> 53 + animFrame
                     else -> def?.propIdx ?: -1
                 }
-                if (pIdx in SpriteArt.props.indices) {
+                val propReg = if (pIdx in SpriteArt.props.indices) SpriteArt.props[pIdx] else BlockRegistry.customPropRegions[bId]
+                if (propReg != null) {
                     spriteBatch.setColor(1f, 1f, 1f, 0.78f * a)
                     spriteBatch.draw(SpriteArt.shadowTex, sx - 24f, sy - 12f, 48f, 22f)
                     spriteBatch.setColor(1f, 1f, 1f, a)
                     val sway = if (bId == 68 || bId == 66) sin(elapsed * 2.8f + gx + gy) * 3.5f else 0f
-                    spriteBatch.draw(SpriteArt.props[pIdx], sx - 32f, sy - 14f, 32f, 14f, 64f, 64f, 1f, 1f, sway)
+                    spriteBatch.draw(propReg, sx - 32f, sy - 14f, 32f, 14f, 64f, 64f, 1f, 1f, sway)
                     spriteBatch.color = Color.WHITE
                     if (bId == 65) {
                         world.signTexts[world.blockKey(gx, gy, gz)]?.takeIf { it.isNotEmpty() }?.let { sTxt ->
@@ -2076,7 +2108,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     rpx, rpy, rp.skinId, rp.facingRight, rp.walkAnim, moving = rp.isMoving,
                     heldId = rp.heldId, attackAnim = rp.attackAnim, attackAngle = 0f,
                     isSleeping = rp.isSleeping, hurtFlash = 0f, hurtSquash = 0f,
-                    armorHelmet = 0, armorChest = 0, hasShieldOffhand = false
+                    armorHelmet = 0, armorChest = 0, hasShieldOffhand = false,
+                    emoteIdx = rp.emoteIdx, emoteTimer = rp.emoteTimer
                 )
                 // Ник и полоска HP над головой друга в мультиплеере!
                 glyphLayout.setText(fontSmall, rp.nick)
@@ -2096,7 +2129,8 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     hx, hy, player.skinId, player.facingRight, player.walkAnim, player.isMoving,
                     held?.id ?: 0, player.attackAnim, player.attackAngleDeg,
                     player.isSleeping, player.hurtFlash, player.hurtSquash,
-                    armorHelmet = player.armor[0], armorChest = player.armor[1], hasShieldOffhand = player.offhand?.id == 132
+                    armorHelmet = player.armor[0], armorChest = player.armor[1], hasShieldOffhand = player.offhand?.id == 132,
+                    emoteIdx = player.activeEmoteIdx, emoteTimer = player.emoteTimer
                 )
                 if (player.parryTimer > 0f) {
                     spriteBatch.setColor(1f, 0.88f, 0.35f, 0.58f)
@@ -2242,12 +2276,36 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         spriteBatch.end()
     }
 
+    private fun triggerPlayerEmote(idx: Int) {
+        if (idx !in EMOTES_LIST.indices) {
+            player.activeEmoteIdx = -1; player.emoteTimer = 0f
+            if (netMp.isConnected) netMp.broadcastEmote(-1)
+            return
+        }
+        if (player.activeEmoteIdx == idx && idx == 4) {
+            player.activeEmoteIdx = -1; player.emoteTimer = 0f
+            if (netMp.isConnected) netMp.broadcastEmote(-1)
+            showToast("Вы встали")
+            return
+        }
+        player.activeEmoteIdx = idx
+        player.emoteTimer = if (idx == 4) 999f else 4.2f
+        emotePickerOpen = false
+        SoundFx.play("pickup", 0.55f)
+        if (netMp.isConnected) netMp.broadcastEmote(idx)
+        val em = EMOTES_LIST[idx]
+        if (idx == 11) entities.spawnRisingSpark(player.x, player.y, player.z + 1.1f, 0xFF4C72, 6f)
+        else if (idx == 8) entities.spawnRisingSpark(player.x, player.y, player.z + 1.1f, 0xFFE248, 6f)
+        showToast("Эмоция: ${em.name}!")
+    }
+
     private fun drawAnimatedHero(
         px: Float, py: Float, skinId: String, facingRight: Boolean, walkAnim: Float, moving: Boolean,
         heldId: Int, attackAnim: Float, attackAngle: Float, isSleeping: Boolean, hurtFlash: Float, hurtSquash: Float,
-        armorHelmet: Int = 0, armorChest: Int = 0, hasShieldOffhand: Boolean = false
+        armorHelmet: Int = 0, armorChest: Int = 0, hasShieldOffhand: Boolean = false,
+        emoteIdx: Int = -1, emoteTimer: Float = 0f
     ) {
-        val frames = SpriteArt.skinSprites[skinId] ?: SpriteArt.skinSprites["fox_officer"]!!
+        val frames = SpriteArt.getSkinFrames(skinId)
         val w = 64f; val h = 80f
 
         if (isSleeping) {
@@ -2304,7 +2362,27 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             }
             mountReg?.let { spriteBatch.draw(it, px - 32f, py - 10f, 32f, 10f, 64f, 64f, side, 1f, 0f) }
         }
-        spriteBatch.draw(frames[frameIdx], px - w * 0.5f + side * lunge * 6f, py - 9f + hopY + rideLift, w * 0.5f, 9f, w, h, scaleX, scaleY, rot)
+        val isSitting = emoteIdx == 4 && !moving
+        val sitDrop = if (isSitting) -7f else 0f
+        val emBounce = if (emoteIdx in setOf(0, 1, 2, 8, 11) && !moving) abs(sin(elapsed * 7.5f)) * 5.5f else 0f
+        val emTilt = when (emoteIdx) {
+            0, 1 -> sin(elapsed * 10f) * 5.5f
+            5 -> sin(elapsed * 14f) * 9.0f
+            7 -> sin(elapsed * 22f) * 4.0f
+            else -> 0f
+        }
+        val finalScY = scaleY * (if (isSitting) 0.80f else 1f)
+        val drawX = px - w * 0.5f + side * lunge * 6f
+        val drawY = py - 9f + hopY + rideLift + sitDrop + emBounce
+        spriteBatch.draw(frames[frameIdx], drawX, drawY, w * 0.5f, 9f, w, h, scaleX, finalScY, rot + emTilt)
+        if (emoteIdx in SpriteArt.emoteOverlays.indices) {
+            spriteBatch.color = Color.WHITE
+            spriteBatch.draw(SpriteArt.emoteOverlays[emoteIdx], drawX, drawY, w * 0.5f, 9f, w, h, scaleX, finalScY, rot + emTilt)
+            val bubAlpha = if (emoteIdx == 4) 0.92f else min(1f, emoteTimer * 1.6f)
+            val bubBob = sin(elapsed * 5.5f) * 4.5f
+            spriteBatch.setColor(1f, 1f, 1f, bubAlpha)
+            spriteBatch.draw(SpriteArt.emoteIcons[emoteIdx], px - 22f, drawY + h + 4f + bubBob, 44f, 44f)
+        }
         spriteBatch.color = Color.WHITE
 
         // Видимая Броня и Щит прямо на герое!
@@ -2413,6 +2491,91 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
     // =========================================================================
     // ULTRA-CLEAN STICK + TAP HUD (0 КНОПОК СПРАВА СНИЗУ!)
     // =========================================================================
+    fun triggerScreenShake(sec: Float) {
+        shakeTimer = max(shakeTimer, sec)
+    }
+
+    private fun resolveModPatch(style: String): NinePatch = when (style.lowercase()) {
+        "blueprint" -> SpriteArt.blueprintPanelPatch
+        "blueprint_slot", "slot_dark" -> SpriteArt.blueprintSlotPatch
+        "parchment" -> SpriteArt.parchmentPatch
+        "gold_panel", "gold" -> SpriteArt.goldShopPanelPatch
+        "gold_btn" -> SpriteArt.goldBtnPatch
+        "gold_slot" -> SpriteArt.goldSlotPatch
+        "ocean", "ocean_panel" -> SpriteArt.oceanPanelPatch
+        "ocean_blue", "blue" -> SpriteArt.oceanBtnBluePatch
+        "ocean_mint", "mint", "green" -> SpriteArt.oceanBtnMintPatch
+        "crimson", "red" -> SpriteArt.crimsonBtnPatch
+        "leather" -> SpriteArt.leatherBtnPatch
+        "backpack" -> SpriteArt.backpackPanelPatch
+        "banner" -> SpriteArt.woodBannerPatch
+        "slot" -> SpriteArt.slotPatch
+        "slot_sel" -> SpriteArt.oceanSlotSelPatch
+        else -> SpriteArt.panelPatch
+    }
+
+    fun drawModPanel(style: String, x: Float, y: Float, w: Float, h: Float) {
+        drawThemedPanel(resolveModPatch(style), x, y, w, h)
+    }
+
+    fun drawModRect(x: Float, y: Float, w: Float, h: Float, hexColor: Int, alpha: Float = 1f) {
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        spriteBatch.setColor(((hexColor shr 16) and 0xFF) / 255f, ((hexColor shr 8) and 0xFF) / 255f, (hexColor and 0xFF) / 255f, alpha.coerceIn(0f, 1f))
+        spriteBatch.draw(SpriteArt.whitePx, x, y, w, h)
+        spriteBatch.color = Color.WHITE
+        spriteBatch.end()
+    }
+
+    fun drawModText(text: String, x: Float, y: Float, w: Float, h: Float, hexColor: Int = 0xFFFFFF, centered: Boolean = false, big: Boolean = false) {
+        val f = if (big) font else fontSmall
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        f.setColor(((hexColor shr 16) and 0xFF) / 255f, ((hexColor shr 8) and 0xFF) / 255f, (hexColor and 0xFF) / 255f, 1f)
+        drawFitTextBatch(f, text, x + 4f, y, max(12f, w - 8f), h, centered = centered)
+        f.color = Color.WHITE
+        spriteBatch.end()
+    }
+
+    fun drawModButton(style: String, x: Float, y: Float, w: Float, h: Float, label: String, onClick: () -> Unit) {
+        drawThemedButton(resolveModPatch(style), x, y, w, h, label, centered = true, onClick = onClick)
+    }
+
+    fun drawModHitArea(x: Float, y: Float, w: Float, h: Float, onClick: () -> Unit) {
+        buttons += Pair(Rectangle(x, y, w, h), onClick)
+    }
+
+    fun drawModIcon(itemId: Int, x: Float, y: Float, w: Float, h: Float) {
+        val reg = BlockRegistry.getIconRegion(itemId) ?: return
+        drawModRegion(reg, x, y, w, h)
+    }
+
+    fun drawModRegion(reg: TextureRegion, x: Float, y: Float, w: Float, h: Float) {
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        spriteBatch.color = Color.WHITE
+        spriteBatch.draw(reg, x, y, w, h)
+        spriteBatch.end()
+    }
+
+    fun drawModProgressBar(x: Float, y: Float, w: Float, h: Float, frac: Float, hexColor: Int, label: String) {
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        SpriteArt.barFramePatch.draw(spriteBatch, x, y, w, h)
+        spriteBatch.setColor(((hexColor shr 16) and 0xFF) / 255f, ((hexColor shr 8) and 0xFF) / 255f, (hexColor and 0xFF) / 255f, 1f)
+        spriteBatch.draw(SpriteArt.whitePx, x + 4f, y + 4f, (w - 8f) * frac.coerceIn(0f, 1f), max(2f, h - 8f))
+        spriteBatch.color = Color.WHITE
+        if (label.isNotEmpty()) drawFitTextBatch(fontSmall, label, x + 6f, y, w - 12f, h, centered = true)
+        spriteBatch.end()
+    }
+
+    fun openModPrompt(title: String, defaultText: String, hint: String, onResult: (String) -> Unit) {
+        Gdx.input.getTextInput(object : Input.TextInputListener {
+            override fun input(text: String) { onResult(text) }
+            override fun canceled() {}
+        }, title, defaultText, hint)
+    }
+
     private fun drawThemedPanel(patch: NinePatch, x: Float, y: Float, w: Float, h: Float) {
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
@@ -2624,6 +2787,10 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             UiScreen.ACHIEVEMENTS -> renderAchievementsScreen(W, H)
             UiScreen.GOLEM_BAG -> renderGolemBagScreen(W, H)
             UiScreen.MOD_STUDIO -> renderModStudioScreen(W, H)
+            UiScreen.MOD_CUSTOM_UI -> {
+                activePanelBounds.set(0f, 0f, W, H)
+                luaMods.emitRenderScreen(activeModScreenId, W, H)
+            }
             UiScreen.PLAYING -> renderGameplayHud(W, H)
             UiScreen.PAUSE -> { renderGameplayHud(W, H); renderPauseMenu(W, H) }
             UiScreen.INVENTORY -> renderInventoryScreen(W, H)
@@ -2706,7 +2873,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         }
         val heroW = H * 0.28f; val heroH = heroW * 1.25f
         val hFr = 2 + (((elapsed * 8f).toInt()) and 3)
-        SpriteArt.skinSprites[player.skinId]?.get(hFr)?.let { reg ->
+        SpriteArt.getSkinFrames(player.skinId)[hFr].let { reg ->
             spriteBatch.draw(reg, W * 0.64f, H * 0.14f, heroW, heroH)
         }
         SpriteArt.mobSprites["fox_pet"]?.get(((elapsed * 8f).toInt()) and 7)?.let { foxReg ->
@@ -2750,7 +2917,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val hdrH = ph * 0.14f
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        drawFitTextBatch(fontSmall, "Rust Engine v6.9 • Новый UI + Мод-Студия", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
+        drawFitTextBatch(fontSmall, "Rust Engine v6.11 • 30 Чиби + Эмоции", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color(1f, 0.90f, 0.48f, 1f)
         drawFitTextBatch(fontSmall, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 18f, py + ph - hdrH * 0.96f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color.WHITE
@@ -2953,7 +3120,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         drawThemedPanel(SpriteArt.parchmentPatch, leftX, py + 16f, leftW, bodyH)
         val heroSz = min(leftW * 0.30f, bodyH * 0.36f)
         val fr = 2 + (((elapsed * 8f).toInt()) and 3)
-        SpriteArt.skinSprites[pr.skinId]?.get(fr)?.let { reg ->
+        SpriteArt.getSkinFrames(pr.skinId)[fr].let { reg ->
             spriteBatch.projectionMatrix = camUI.combined
             spriteBatch.begin()
             spriteBatch.draw(reg, leftX + 16f, bodyTop - heroSz * 1.25f - 12f, heroSz, heroSz * 1.25f)
@@ -3488,8 +3655,36 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             spriteBatch.end()
             drawButton(fx, fy - 52f, fw, 42f, "ПОДСЕЧЬ! (Тап в зелёной зоне)", green = true, centered = true) { resolveFishingCatch() }
         }
+        // Кнопка ЭМОЦИЙ справа под паузой (работает в одиночке и в мультиплеере!)
+        val emBtnY = cY - cD - 10f
+        drawCircleBtn(W - cD * 0.5f - 10f, emBtnY, cD * 0.88f, "ЭМОЦ", blue = emotePickerOpen) {
+            emotePickerOpen = !emotePickerOpen
+        }
+        if (emotePickerOpen) {
+            val epW = min(W * 0.70f, 640f)
+            val epH = min(H * 0.34f, 224f)
+            val epX = (W - epW) * 0.5f
+            val epY = H * 0.25f
+            drawThemedPanel(SpriteArt.oceanPanelPatch, epX, epY, epW, epH)
+            val cw = (epW - 28f) / 6f
+            val ch = (epH - 26f) / 2f
+            EMOTES_LIST.forEachIndexed { idx, em ->
+                val cx = epX + 14f + (idx % 6) * cw
+                val cy = epY + epH - 13f - (idx / 6 + 1) * ch
+                val act = player.activeEmoteIdx == idx
+                drawThemedPanel(if (act) SpriteArt.oceanSlotSelPatch else SpriteArt.oceanSlotPatch, cx + 2f, cy + 2f, cw - 4f, ch - 4f)
+                val ico = min(cw - 14f, ch * 0.62f)
+                spriteBatch.projectionMatrix = camUI.combined
+                spriteBatch.begin()
+                spriteBatch.color = Color.WHITE
+                spriteBatch.draw(SpriteArt.emoteIcons[idx], cx + (cw - ico) * 0.5f, cy + ch - ico - 6f, ico, ico)
+                drawFitTextBatch(fontSmall, em.name, cx + 4f, cy + 2f, cw - 8f, ch * 0.32f, centered = true)
+                spriteBatch.end()
+                buttons += Pair(Rectangle(cx + 2f, cy + 2f, cw - 4f, ch - 4f)) { triggerPlayerEmote(idx) }
+            }
+        }
         if (netMp.isConnected) {
-            drawCircleBtn(W - cD * 0.5f - 10f, cY - cD - 10f, cD * 0.88f, "ЧАТ", blue = true) {
+            drawCircleBtn(W - cD * 0.5f - 10f, emBtnY - cD * 0.94f - 8f, cD * 0.88f, "ЧАТ", blue = true) {
                 Gdx.input.getTextInput(object : Input.TextInputListener {
                     override fun input(text: String) {
                         val m = text.trim().take(60)
@@ -3657,6 +3852,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             drawThemedSlotBox(sp, sx, sy, slotSz - 4f, s)
         }
         drawThemedButton(SpriteArt.oceanBtnMintPatch, hbX + 7f + 9 * slotSz, hbY + 7f, slotSz + 2f, slotSz - 4f, "...", centered = true) { screen = UiScreen.INVENTORY }
+        luaMods.emitRenderHud(W, H)
     }
 
     private fun renderCampfireScreen(W: Float, H: Float) {
@@ -3951,7 +4147,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         // Живой Герой (8 кадров!) на пергаменте!
         val heroW = min(leftW * 0.44f, bodyH * 0.34f); val heroH = heroW * 1.25f
         val heroFr = 2 + (((elapsed * 8f).toInt()) and 3)
-        SpriteArt.skinSprites[player.skinId]?.get(heroFr)?.let { reg ->
+        SpriteArt.getSkinFrames(player.skinId)[heroFr].let { reg ->
             spriteBatch.projectionMatrix = camUI.combined
             spriteBatch.begin()
             spriteBatch.draw(reg, leftX + (leftW - heroW) * 0.5f, bodyTop - heroH - 18f, heroW, heroH)
@@ -4646,54 +4842,135 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                 drawButton(bx + bw * 0.52f, H * 0.16f, bw * 0.48f, max(48f, H * 0.08f), "Книга Достижений", blue = true, centered = true) { screen = UiScreen.ACHIEVEMENTS }
             }
             else -> {
-                var my = H * 0.66f
-                for (m in luaMods.mods.take(6)) {
-                    drawButton(bx, my, bw, 48f, "${if (m.enabled) "[ВКЛ]" else "[ВЫКЛ]"} ${m.name} — ${m.desc}", green = m.enabled) {
-                        m.enabled = !m.enabled; luaMods.hotReload(); showToast("${if (m.enabled) "Включён" else "Отключён"}: ${m.name}")
+                val perPage = 5
+                val totalPages = max(1, (luaMods.mods.size + perPage - 1) / perPage)
+                modsPage = modsPage.coerceIn(0, totalPages - 1)
+                val listTop = H * 0.74f
+                val botBarY = H * 0.12f
+                val botBarH = max(46f, H * 0.085f)
+                val rowH = max(44f, (listTop - (botBarY + botBarH + 14f)) / perPage - 6f)
+                val slice = luaMods.mods.drop(modsPage * perPage).take(perPage)
+                val shrW = max(92f, bw * 0.12f)
+                val delW = max(92f, bw * 0.12f)
+                slice.forEachIndexed { idx, m ->
+                    val my = listTop - (idx + 1) * (rowH + 6f) + 6f
+                    val verTag = if (m.version.isNotBlank()) " v${m.version}" else ""
+                    val lbl = "${if (m.enabled) "[ВКЛ]" else "[ВЫКЛ]"} ${m.name}$verTag — ${m.desc}"
+                    if (!m.isBuiltin && m.packFile != null) {
+                        val mainW = bw - shrW - delW - 14f
+                        drawButton(bx, my, mainW, rowH, lbl, green = m.enabled) {
+                            m.enabled = !m.enabled; luaMods.hotReload()
+                            showToast("${if (m.enabled) "Включён" else "Отключён"}: ${m.name} v${m.version}")
+                        }
+                        drawButton(bx + mainW + 6f, my, shrW, rowH, "Подел.", blue = true, centered = true) {
+                            val pf = m.packFile
+                            if (pf == null || !PlatformBridge.shareFile(pf, "Поделиться модом ${m.name}")) showToast("Файл мода недоступен")
+                        }
+                        drawButton(bx + mainW + shrW + 12f, my, delW, rowH, "Удал.", red = true, centered = true) {
+                            if (luaMods.deleteExternalMod(m.id)) showToast("Мод «${m.name}» удалён!")
+                        }
+                    } else {
+                        drawButton(bx, my, bw, rowH, lbl, green = m.enabled) {
+                            m.enabled = !m.enabled; luaMods.hotReload()
+                            showToast("${if (m.enabled) "Включён" else "Отключён"}: ${m.name}")
+                        }
                     }
-                    my -= 56f
                 }
-                val mw3 = (bw - 20f) / 3f
-                drawButton(bx, H * 0.14f, mw3, max(48f, H * 0.08f), "МОД-СТУДИЯ", blue = true, centered = true) { modStudio.studioTab = 0; screen = UiScreen.MOD_STUDIO }
-                drawButton(bx + mw3 + 10f, H * 0.14f, mw3, max(48f, H * 0.08f), "Импорт (.vhmod/.lua)", green = true, centered = true) { PlatformBridge.onPickFileRequest?.invoke() }
-                drawButton(bx + (mw3 + 10f) * 2f, H * 0.14f, mw3, max(48f, H * 0.08f), "Перезагрузить", centered = true) { luaMods.hotReload(); modStudio.loadAndApply(); showToast("Все моды перезагружены!") }
+                val mw4 = (bw - 24f) / 4f
+                drawButton(bx, botBarY, mw4, botBarH, "МОД-СТУДИЯ", blue = true, centered = true) { modStudio.studioTab = 0; screen = UiScreen.MOD_STUDIO }
+                drawButton(bx + mw4 + 8f, botBarY, mw4, botBarH, "Импорт (.vhpack)", green = true, centered = true) { PlatformBridge.onPickFileRequest?.invoke() }
+                drawButton(bx + (mw4 + 8f) * 2f, botBarY, mw4, botBarH, "Перезагрузить", centered = true) { luaMods.hotReload(); showToast("Моды обновлены (${luaMods.mods.size})!") }
+                drawButton(bx + (mw4 + 8f) * 3f, botBarY, mw4, botBarH, "Стр. ${modsPage + 1}/$totalPages >", blue = true, centered = true) { modsPage = (modsPage + 1) % totalPages }
             }
         }
     }
 
     private fun renderWardrobeScreen(W: Float, H: Float) {
-        val px = W * 0.06f; val py = H * 0.05f; val pw = W * 0.88f; val ph = H * 0.90f
-        drawPanel(px, py, pw, ph)
-        val topH = ph * 0.11f; val topY = py + ph - topH - 10f
+        val px = W * 0.03f; val py = H * 0.03f; val pw = W * 0.94f; val ph = H * 0.94f
+        drawThemedPanel(SpriteArt.oceanPanelPatch, px, py, pw, ph)
+        val topH = ph * 0.10f; val topY = py + ph - topH - 10f
+        val curSkinObj = SKINS_LIST.firstOrNull { it.id == player.skinId } ?: SKINS_LIST[0]
         spriteBatch.projectionMatrix = camUI.combined
-        spriteBatch.begin(); drawFitTextBatch(font, "ГАРДЕРОБ ГЕРОЕВ И ПЛАЩИ", px + 22f, topY, pw * 0.65f, topH, centered = false); spriteBatch.end()
-        drawButton(px + pw - topH * 2.1f - 14f, topY, topH * 2.0f, topH, "Готово", green = true, centered = true) { screen = if (world.worldActive) UiScreen.PLAYING else UiScreen.MAIN_MENU }
-
-        val leftW = pw * 0.32f
-        drawPanel(px + 18f, py + 18f, leftW, topY - py - 28f, badge = true)
-        val fr = 2 + (((elapsed * 8f).toInt()) and 3)
-        SpriteArt.skinSprites[player.skinId]?.get(fr)?.let { reg ->
-            val hw = min(leftW * 0.68f, ph * 0.34f); val hh = hw * 1.25f
-            spriteBatch.projectionMatrix = camUI.combined
-            spriteBatch.begin()
-            spriteBatch.draw(reg, px + 18f + (leftW - hw) * 0.5f, py + ph * 0.28f, hw, hh)
-            spriteBatch.end()
+        spriteBatch.begin()
+        drawFitTextBatch(font, "ГАРДЕРОБ ЧИБИ (${SKINS_LIST.size} ГЕРОЕВ) — ${curSkinObj.name}", px + 22f, topY, pw * 0.72f, topH, centered = false)
+        spriteBatch.end()
+        drawThemedButton(SpriteArt.oceanBtnMintPatch, px + pw - topH * 2.2f - 14f, topY, topH * 2.1f, topH, "Готово", centered = true) {
+            wardrobeEmoteTest = -1
+            screen = if (world.worldActive) UiScreen.PLAYING else UiScreen.MAIN_MENU
         }
-        val cloakNames = arrayOf("Без плаща", "Алый плащ", "Изумрудный плащ", "Теневой плащ", "Золотой плащ", "Крылья Небес")
-        drawButton(px + 28f, py + 30f, leftW - 20f, max(48f, ph * 0.10f), "Плащ: ${cloakNames[profiles.active.cloakId.coerceIn(0, 5)]}", blue = true, centered = true) {
+
+        val bodyTop = topY - 10f; val bodyH = bodyTop - (py + 16f)
+        val leftW = pw * 0.28f; val leftX = px + 14f
+        drawThemedPanel(SpriteArt.parchmentPatch, leftX, py + 16f, leftW, bodyH)
+
+        val fr = 2 + (((elapsed * 7f).toInt()) and 3)
+        val prevFrames = SpriteArt.getSkinFrames(player.skinId)
+        val hw = min(leftW * 0.62f, bodyH * 0.42f); val hh = hw * 1.25f
+        val heroX = leftX + (leftW - hw) * 0.5f; val heroY = py + bodyH * 0.34f
+        spriteBatch.projectionMatrix = camUI.combined
+        spriteBatch.begin()
+        spriteBatch.color = Color.WHITE
+        spriteBatch.draw(prevFrames[fr], heroX, heroY, hw, hh)
+        if (wardrobeEmoteTest in SpriteArt.emoteOverlays.indices) {
+            spriteBatch.draw(SpriteArt.emoteOverlays[wardrobeEmoteTest], heroX, heroY, hw, hh)
+            val bSz = hw * 0.58f
+            spriteBatch.draw(SpriteArt.emoteIcons[wardrobeEmoteTest], heroX + (hw - bSz) * 0.5f, heroY + hh + 2f + sin(elapsed * 5f) * 4f, bSz, bSz)
+        }
+        fontSmall.color = Color(0.24f, 0.14f, 0.08f, 1f)
+        drawFitTextBatch(fontSmall, curSkinObj.name, leftX + 10f, heroY - 32f, leftW - 20f, 28f, centered = true)
+        fontSmall.color = Color.WHITE
+        spriteBatch.end()
+
+        val btnH = max(44f, bodyH * 0.12f)
+        val emTestLbl = if (wardrobeEmoteTest in EMOTES_LIST.indices) "Эмоция: ${EMOTES_LIST[wardrobeEmoteTest].name}" else "Тест эмоции >"
+        drawThemedButton(SpriteArt.goldBtnPatch, leftX + 14f, py + 26f + btnH + 8f, leftW - 28f, btnH, emTestLbl, centered = true) {
+            wardrobeEmoteTest = (wardrobeEmoteTest + 1) % EMOTES_LIST.size
+            SoundFx.play("pickup", 0.45f)
+        }
+        val cloakNames = arrayOf("Без плаща", "Алый плащ", "Изумрудный", "Теневой", "Золотой", "Крылья Небес")
+        drawThemedButton(SpriteArt.oceanBtnBluePatch, leftX + 14f, py + 24f, leftW - 28f, btnH, "Плащ: ${cloakNames[profiles.active.cloakId.coerceIn(0, 5)]}", centered = true) {
             profiles.active.cloakId = (profiles.active.cloakId + 1) % cloakNames.size
             profiles.saveProfiles()
         }
 
-        val rightX = px + leftW + 30f; val rightW = pw - leftW - 48f
-        val colW = (rightW - 14f) * 0.5f
-        val rowH = (topY - py - 48f) / 3f - 8f
-        SKINS_LIST.forEachIndexed { idx, sk ->
-            val cx = rightX + (idx % 2) * (colW + 14f)
-            val cy = topY - 14f - (idx / 2 + 1) * (rowH + 10f) + 10f
-            drawButton(cx, cy, colW, rowH, sk.name, green = player.skinId == sk.id, centered = true) {
-                player.skinId = sk.id; profiles.active.skinId = sk.id; profiles.saveProfiles(); showToast("Герой: ${sk.name}")
+        // ПРАВАЯ СЕТКА: 4x3 карточки с ЖИВЫМИ спрайтами всех 30 чиби (3 страницы!)
+        val rightX = leftX + leftW + 14f; val rightW = pw - leftW - 42f
+        val perPage = 12
+        val totalPages = (SKINS_LIST.size + perPage - 1) / perPage
+        wardrobePage = wardrobePage.coerceIn(0, totalPages - 1)
+        val navH = max(44f, bodyH * 0.11f)
+        val gridH = bodyH - navH - 12f
+        val colW = (rightW - 18f) / 4f
+        val rowH = (gridH - 12f) / 3f
+
+        val slice = SKINS_LIST.drop(wardrobePage * perPage).take(perPage)
+        slice.forEachIndexed { i, sk ->
+            val cx = rightX + (i % 4) * (colW + 6f)
+            val cy = bodyTop - (i / 4 + 1) * (rowH + 6f) + 6f
+            val sel = player.skinId == sk.id
+            drawThemedPanel(if (sel) SpriteArt.oceanSlotSelPatch else SpriteArt.oceanSlotPatch, cx, cy, colW, rowH)
+            val sh = min(rowH * 0.62f, colW * 0.62f); val sw = sh * 0.80f
+            val reg = SpriteArt.getSkinFrames(sk.id)[if (sel) fr else 0]
+            spriteBatch.projectionMatrix = camUI.combined
+            spriteBatch.begin()
+            spriteBatch.color = Color.WHITE
+            spriteBatch.draw(reg, cx + (colW - sw) * 0.5f, cy + rowH - sh - 6f, sw, sh)
+            drawFitTextBatch(fontSmall, sk.name, cx + 6f, cy + 4f, colW - 12f, rowH * 0.28f, centered = true)
+            spriteBatch.end()
+            buttons += Pair(Rectangle(cx, cy, colW, rowH)) {
+                player.skinId = sk.id; profiles.active.skinId = sk.id; profiles.saveProfiles()
+                SoundFx.play("pickup", 0.45f)
+                showToast("Выбран герой: ${sk.name}!")
             }
+        }
+
+        val navW = rightW * 0.34f
+        drawThemedButton(SpriteArt.oceanBtnBluePatch, rightX, py + 16f, navW, navH, "< НАЗАД", centered = true) {
+            wardrobePage = (wardrobePage - 1 + totalPages) % totalPages
+        }
+        drawCenteredText(fontSmall, "Стр. ${wardrobePage + 1} / $totalPages  (30 героев)", rightX + navW, py + 16f, rightW - navW * 2f, navH)
+        drawThemedButton(SpriteArt.oceanBtnBluePatch, rightX + rightW - navW, py + 16f, navW, navH, "ДАЛЕЕ >", centered = true) {
+            wardrobePage = (wardrobePage + 1) % totalPages
         }
     }
 
@@ -5111,7 +5388,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
     override fun dispose() {
         netMp.stop(); bgMusic?.dispose()
-        SoundFx.dispose(); BlockRegistry.dispose(); SpriteArt.dispose()
+        ModAudioEngine.dispose(); luaMods.dispose(); SoundFx.dispose(); BlockRegistry.dispose(); SpriteArt.dispose()
         if (::minimapTex.isInitialized) minimapTex.dispose()
         if (::minimapPixmap.isInitialized) minimapPixmap.dispose()
         spriteBatch.dispose(); shapeRenderer.dispose()

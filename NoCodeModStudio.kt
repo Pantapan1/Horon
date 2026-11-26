@@ -15,7 +15,8 @@ data class CustomBlockMod(
     var lightRadius: Float = 0f,
     var lightColor: Int = 0xFFE688,
     var hardness: Float = 1.0f,
-    var stepEffect: Int = 0 // 0=Нет, 1=Батут, 2=Ускорение, 3=Лечение, 4=Шипы/Урон, 5=Лифт +4
+    var stepEffect: Int = 0, // 0=Нет, 1=Батут, 2=Ускорение, 3=Лечение, 4=Шипы/Урон, 5=Лифт +4
+    var modId: String = "local"
 )
 
 data class CustomItemMod(
@@ -29,7 +30,8 @@ data class CustomItemMod(
     var healHp: Int = 0,
     var healFood: Int = 0,
     var aoeMine: Boolean = false,
-    var specialFx: Int = 0 // 0=Нет, 1=Взрыв, 2=Лёд, 3=Вампиризм, 4=Стан/Молния, 5=Скорость, 6=Щит, 7=ТП домой
+    var specialFx: Int = 0, // 0=Нет, 1=Взрыв, 2=Лёд, 3=Вампиризм, 4=Стан/Молния, 5=Скорость, 6=Щит, 7=ТП домой
+    var modId: String = "local"
 )
 
 data class CustomRecipeMod(
@@ -39,7 +41,8 @@ data class CustomRecipeMod(
     var req1Cnt: Int,
     var req2Id: Int,
     var req2Cnt: Int,
-    var station: Int // 0=Карман 2x2, 1=Верстак, 2=Костёр
+    var station: Int, // 0=Карман 2x2, 1=Верстак, 2=Костёр
+    var modId: String = "local"
 )
 
 data class CustomMobMod(
@@ -51,7 +54,8 @@ data class CustomMobMod(
     var damage: Float = 6f,
     var speed: Float = 2.8f,
     var dropId: Int = 118,
-    var dropCount: Int = 1
+    var dropCount: Int = 1,
+    var modId: String = "local"
 )
 
 data class CustomRuleMod(
@@ -61,7 +65,8 @@ data class CustomRuleMod(
     var action: Int = 0,  // 0=Выдать предмет, 1=Лечить +6 HP, 2=Скорость, 3=Сила, 4=Взрыв, 5=Спавн моба, 6=Тост, 7=Еда, 8=Смена погоды
     var paramId: Int = 113,
     var paramCount: Int = 1,
-    var paramText: String = "Событие сработало!"
+    var paramText: String = "Событие сработало!",
+    var modId: String = "local"
 )
 
 class WorldModRules {
@@ -180,9 +185,37 @@ class NoCodeModStudio(private val storageRoot: File) {
 
     private fun saveFile(): File = File(File(storageRoot, "mods"), "nocode_mods_v69.dat")
 
-    private fun parseModLines(lines: List<String>, mergeMode: Boolean): Int {
+    fun clearExternalPackContent() {
+        customBlocks.removeIf { it.modId.startsWith("pack:") }
+        customItems.removeIf { it.modId.startsWith("pack:") }
+        customRecipes.removeIf { it.modId.startsWith("pack:") }
+        customMobs.removeIf { it.modId.startsWith("pack:") }
+        customRules.removeIf { it.modId.startsWith("pack:") }
+    }
+
+    fun clearModContent(tag: String) {
+        customBlocks.removeIf { it.modId == tag }
+        customItems.removeIf { it.modId == tag }
+        customRecipes.removeIf { it.modId == tag }
+        customMobs.removeIf { it.modId == tag }
+        customRules.removeIf { it.modId == tag }
+    }
+
+    private fun parseModLines(lines: List<String>, mergeMode: Boolean, defaultModId: String = "local"): Int {
         var added = 0
+        var activeTag = defaultModId
         try {
+            // Pre-scan optional MOD|<id>|<name>|<ver> header for clean versioned updates!
+            for (raw in lines) {
+                val p = raw.trim().split("|")
+                if (p.size >= 2 && p[0] == "MOD" && p[1].isNotBlank()) {
+                    activeTag = p[1].trim()
+                    break
+                }
+            }
+            if (mergeMode && activeTag != "local") {
+                clearModContent(activeTag)
+            }
             for (raw in lines) {
                 val p = raw.trim().split("|")
                 if (p.isEmpty()) continue
@@ -192,12 +225,14 @@ class NoCodeModStudio(private val storageRoot: File) {
                         val hexes = p[8].split(",")
                         for (i in 0 until min(64, hexes.size)) px[i] = hexes[i].toIntOrNull(16) ?: 0x38C8FF
                         val bid = p[1].toIntOrNull() ?: 190
+                        val tag = if (p.size >= 10 && p[9].isNotBlank()) p[9] else activeTag
                         if (mergeMode) customBlocks.removeIf { it.id == bid }
                         customBlocks += CustomBlockMod(
                             id = bid, name = p[2], pixels = px,
                             solid = p[3] == "1", lightRadius = p[4].toFloatOrNull() ?: 0f,
                             lightColor = p[5].toIntOrNull() ?: 0xFFE688,
-                            hardness = p[6].toFloatOrNull() ?: 1f, stepEffect = p[7].toIntOrNull() ?: 0
+                            hardness = p[6].toFloatOrNull() ?: 1f, stepEffect = p[7].toIntOrNull() ?: 0,
+                            modId = tag
                         )
                         added++
                     }
@@ -206,37 +241,46 @@ class NoCodeModStudio(private val storageRoot: File) {
                         val hexes = p[11].split(",")
                         for (i in 0 until min(64, hexes.size)) px[i] = if (hexes[i] == "-") -1 else (hexes[i].toIntOrNull(16) ?: -1)
                         val iid = p[1].toIntOrNull() ?: 261
+                        val tag = if (p.size >= 13 && p[12].isNotBlank()) p[12] else activeTag
                         if (mergeMode) customItems.removeIf { it.id == iid }
                         customItems += CustomItemMod(
                             id = iid, name = p[2], pixels = px, kind = p[3],
                             damage = p[4].toIntOrNull() ?: 12, mineSpeed = p[5].toFloatOrNull() ?: 6f,
                             durability = p[6].toIntOrNull() ?: 300, healHp = p[7].toIntOrNull() ?: 0,
-                            healFood = p[8].toIntOrNull() ?: 0, aoeMine = p[9] == "1", specialFx = p[10].toIntOrNull() ?: 0
+                            healFood = p[8].toIntOrNull() ?: 0, aoeMine = p[9] == "1", specialFx = p[10].toIntOrNull() ?: 0,
+                            modId = tag
                         )
                         added++
                     }
                     "REC" -> if (p.size >= 8) {
-                        customRecipes += CustomRecipeMod(
-                            p[1].toIntOrNull() ?: 190, p[2].toIntOrNull() ?: 1,
-                            p[3].toIntOrNull() ?: 7, p[4].toIntOrNull() ?: 2,
-                            p[5].toIntOrNull() ?: 0, p[6].toIntOrNull() ?: 0,
-                            p[7].toIntOrNull() ?: 1
-                        )
+                        val outId = p[1].toIntOrNull() ?: 190
+                        val outCnt = p[2].toIntOrNull() ?: 1
+                        val r1 = p[3].toIntOrNull() ?: 7; val r1c = p[4].toIntOrNull() ?: 2
+                        val r2 = p[5].toIntOrNull() ?: 0; val r2c = p[6].toIntOrNull() ?: 0
+                        val st = p[7].toIntOrNull() ?: 1
+                        val tag = if (p.size >= 9 && p[8].isNotBlank()) p[8] else activeTag
+                        // Prevent duplicate identical recipes!
+                        customRecipes.removeIf { it.outId == outId && it.req1Id == r1 && it.req2Id == r2 && it.station == st }
+                        customRecipes += CustomRecipeMod(outId, outCnt, r1, r1c, r2, r2c, st, tag)
                         added++
                     }
                     "MOB" -> if (p.size >= 10) {
+                        val tag = if (p.size >= 11 && p[10].isNotBlank()) p[10] else activeTag
                         if (mergeMode) customMobs.removeIf { it.name == p[1] }
                         customMobs += CustomMobMod(
                             p[1], p[2], p[3].toIntOrNull() ?: 0x58EEFF, p[4].toIntOrNull() ?: 1,
                             p[5].toFloatOrNull() ?: 45f, p[6].toFloatOrNull() ?: 6f,
-                            p[7].toFloatOrNull() ?: 2.8f, p[8].toIntOrNull() ?: 118, p[9].toIntOrNull() ?: 1
+                            p[7].toFloatOrNull() ?: 2.8f, p[8].toIntOrNull() ?: 118, p[9].toIntOrNull() ?: 1,
+                            tag
                         )
                         added++
                     }
                     "RULE" -> if (p.size >= 8) {
+                        val tag = if (p.size >= 9 && p[8].isNotBlank()) p[8] else activeTag
+                        customRules.removeIf { it.name == p[1] && it.trigger == (p[3].toIntOrNull() ?: 0) && it.action == (p[4].toIntOrNull() ?: 0) }
                         customRules += CustomRuleMod(
                             p[1], p[2] == "1", p[3].toIntOrNull() ?: 0, p[4].toIntOrNull() ?: 0,
-                            p[5].toIntOrNull() ?: 113, p[6].toIntOrNull() ?: 1, p[7]
+                            p[5].toIntOrNull() ?: 113, p[6].toIntOrNull() ?: 1, p[7], tag
                         )
                         added++
                     }
@@ -265,64 +309,79 @@ class NoCodeModStudio(private val storageRoot: File) {
             PlatformBridge.loadNoCodeModsVault()
         }
         if (!text.isNullOrBlank()) {
-            parseModLines(text.lines(), mergeMode = false)
+            parseModLines(text.lines(), mergeMode = false, defaultModId = "local")
             if (!f.exists()) saveAll()
         }
         applyAllToEngine()
     }
 
-    fun importNoCodeModText(rawText: String, sourceName: String): String {
-        val added = parseModLines(rawText.lines(), mergeMode = true)
-        applyAllToEngine()
-        saveAll()
-        return if (added > 0) "Мод «$sourceName» импортирован (+$added элем.)!" else "Настройки из мода «$sourceName» применены!"
+    fun loadPackVhmod(packId: String, rawText: String) {
+        parseModLines(rawText.lines(), mergeMode = true, defaultModId = "pack:$packId")
     }
 
-    fun serializeAll(): String {
+    fun importNoCodeModText(rawText: String, sourceName: String): String {
+        val tag = "vhmod_" + sourceName.lowercase().replace(Regex("[^a-z0-9_]"), "_").take(24)
+        val existed = customBlocks.any { it.modId == tag } || customItems.any { it.modId == tag } || customRecipes.any { it.modId == tag }
+        val added = parseModLines(rawText.lines(), mergeMode = true, defaultModId = tag)
+        applyAllToEngine()
+        saveAll()
+        val verb = if (existed) "обновлён (без дублей)" else "импортирован"
+        return if (added > 0) "Мод «$sourceName» $verb (+$added элем.)!" else "Настройки из мода «$sourceName» применены!"
+    }
+
+    fun serializeAll(includePackContent: Boolean = false): String {
         val sb = StringBuilder()
         sb.append("WORLD|").append(worldRules.playerSpeedMult).append('|').append(worldRules.mobDamageMult).append('|')
             .append(worldRules.mineSpeedMult).append('|').append(worldRules.dropMult).append('|')
             .append(worldRules.timeMode).append('|').append(if (worldRules.infiniteDurability) "1" else "0").append('|')
             .append(if (worldRules.godMode) "1" else "0").append('|').append(if (worldRules.megaDash) "1" else "0").append('\n')
         for (b in customBlocks) {
+            if (!includePackContent && b.modId.startsWith("pack:")) continue
             val pxStr = b.pixels.joinToString(",") { "%06X".format(it and 0xFFFFFF) }
             sb.append("BLK|").append(b.id).append('|').append(b.name.replace("|", "")).append('|')
                 .append(if (b.solid) "1" else "0").append('|').append(b.lightRadius).append('|')
-                .append(b.lightColor).append('|').append(b.hardness).append('|').append(b.stepEffect).append('|').append(pxStr).append('\n')
+                .append(b.lightColor).append('|').append(b.hardness).append('|').append(b.stepEffect).append('|')
+                .append(pxStr).append('|').append(b.modId).append('\n')
         }
         for (it in customItems) {
+            if (!includePackContent && it.modId.startsWith("pack:")) continue
             val pxStr = it.pixels.joinToString(",") { if (it < 0) "-" else "%06X".format(it and 0xFFFFFF) }
             sb.append("ITM|").append(it.id).append('|').append(it.name.replace("|", "")).append('|')
                 .append(it.kind).append('|').append(it.damage).append('|').append(it.mineSpeed).append('|')
                 .append(it.durability).append('|').append(it.healHp).append('|').append(it.healFood).append('|')
-                .append(if (it.aoeMine) "1" else "0").append('|').append(it.specialFx).append('|').append(pxStr).append('\n')
+                .append(if (it.aoeMine) "1" else "0").append('|').append(it.specialFx).append('|')
+                .append(pxStr).append('|').append(it.modId).append('\n')
         }
         for (r in customRecipes) {
+            if (!includePackContent && r.modId.startsWith("pack:")) continue
             sb.append("REC|").append(r.outId).append('|').append(r.outCount).append('|')
                 .append(r.req1Id).append('|').append(r.req1Cnt).append('|').append(r.req2Id).append('|')
-                .append(r.req2Cnt).append('|').append(r.station).append('\n')
+                .append(r.req2Cnt).append('|').append(r.station).append('|').append(r.modId).append('\n')
         }
         for (m in customMobs) {
+            if (!includePackContent && m.modId.startsWith("pack:")) continue
             sb.append("MOB|").append(m.name.replace("|", "")).append('|').append(m.baseSkin).append('|')
                 .append(m.tintHex).append('|').append(m.behavior).append('|').append(m.maxHp).append('|')
-                .append(m.damage).append('|').append(m.speed).append('|').append(m.dropId).append('|').append(m.dropCount).append('\n')
+                .append(m.damage).append('|').append(m.speed).append('|').append(m.dropId).append('|')
+                .append(m.dropCount).append('|').append(m.modId).append('\n')
         }
         for (ru in customRules) {
+            if (!includePackContent && ru.modId.startsWith("pack:")) continue
             sb.append("RULE|").append(ru.name.replace("|", "")).append('|').append(if (ru.enabled) "1" else "0").append('|')
                 .append(ru.trigger).append('|').append(ru.action).append('|').append(ru.paramId).append('|')
-                .append(ru.paramCount).append('|').append(ru.paramText.replace("|", "")).append('\n')
+                .append(ru.paramCount).append('|').append(ru.paramText.replace("|", "")).append('|').append(ru.modId).append('\n')
         }
         return sb.toString()
     }
 
     fun exportAllToFile(destFile: File): File {
         destFile.parentFile?.mkdirs()
-        destFile.writeText(serializeAll(), Charsets.UTF_8)
+        destFile.writeText(serializeAll(includePackContent = false), Charsets.UTF_8)
         return destFile
     }
 
     fun saveAll() {
-        val text = serializeAll()
+        val text = serializeAll(includePackContent = false)
         try {
             saveFile().parentFile?.mkdirs()
             saveFile().writeText(text, Charsets.UTF_8)

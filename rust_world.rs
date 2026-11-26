@@ -295,6 +295,37 @@ impl RustWorld {
         }
     }
 
+    pub fn register_mod_block_ex(
+        &mut self,
+        id: i32,
+        top_tile: i32,
+        side_tile: i32,
+        color_hex: i32,
+        solid: bool,
+        transparent: bool,
+        is_prop: bool,
+        light_radius: f32,
+        light_color: i32,
+    ) {
+        if (1..256).contains(&id) {
+            self.lut[id as usize] = BlockMeta {
+                solid,
+                transparent: transparent || is_prop,
+                is_prop,
+                is_climbable: false,
+                is_foliage: false,
+                is_liquid: false,
+                is_lava: false,
+                is_ore: false,
+                top_tile: if is_prop { -1 } else { top_tile as i16 },
+                side_tile: if is_prop { -1 } else { side_tile as i16 },
+                light_radius: light_radius.max(0.0),
+                light_color,
+                color_hex,
+            };
+        }
+    }
+
     pub fn get_biome(&self, wx: i32, wy: i32) -> i32 {
         if self.dim != 0 {
             return 0;

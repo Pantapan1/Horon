@@ -34,6 +34,8 @@ data class RemotePlayer(
     var heldId: Int = 0,
     var hp: Float = 20f,
     var maxHp: Float = 20f,
+    var emoteIdx: Int = -1,
+    var emoteTimer: Float = 0f,
     var lastSeenMs: Long = System.currentTimeMillis()
 )
 
@@ -575,6 +577,14 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 game.applyRemoteSign(x, y, z, txt)
                 if (asHost && !isOnlineRelay) broadcastSign(x, y, z, txt, skip = skipTcp)
             }
+            16 -> { // EMOTE_SYNC (Синхронизация эмоций персонажей!)
+                val emIdx = inp.readInt()
+                remotePlayers[peerKey]?.let { rp ->
+                    rp.emoteIdx = emIdx
+                    rp.emoteTimer = if (emIdx == 4) 999f else if (emIdx >= 0) 4.2f else 0f
+                }
+                if (asHost && !isOnlineRelay) broadcastEmote(emIdx, skip = skipTcp)
+            }
         }
     }
 
@@ -591,6 +601,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             rp.isMoving = d > 0.035f
             if (rp.isMoving) rp.walkAnim += kotlin.math.min(0.6f, d) * 8.5f
             if (rp.attackAnim > 0f) rp.attackAnim = kotlin.math.max(0f, rp.attackAnim - dt * 5f)
+            if (rp.isMoving && rp.emoteIdx == 4) { rp.emoteIdx = -1; rp.emoteTimer = 0f }
+            if (rp.emoteTimer > 0f && rp.emoteIdx != 4) { rp.emoteTimer = kotlin.math.max(0f, rp.emoteTimer - dt); if (rp.emoteTimer <= 0f) rp.emoteIdx = -1 }
         }
     }
 
@@ -761,6 +773,18 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
         if (!isConnected) return
         netSendExec.execute {
             val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(14); p.writeInt(x); p.writeInt(y); p.writeInt(z); p.writeUTF(txt) }
+            if (isOnlineRelay) publishOnlinePacket(writer)
+            else {
+                val targets = if (isHost) clientStreams else listOfNotNull(clientOut)
+                for (o in targets) if (o !== skip) try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun broadcastEmote(emoteIdx: Int, skip: DataOutputStream? = null) {
+        if (!isConnected) return
+        netSendExec.execute {
+            val writer: (DataOutputStream) -> Unit = { p -> p.writeByte(16); p.writeInt(emoteIdx) }
             if (isOnlineRelay) publishOnlinePacket(writer)
             else {
                 val targets = if (isHost) clientStreams else listOfNotNull(clientOut)

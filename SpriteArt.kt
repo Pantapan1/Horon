@@ -11,14 +11,54 @@ import kotlin.math.hypot
 import kotlin.math.pow
 
 data class SkinProfile(val id: String, val name: String)
+data class EmoteDef(val id: String, val name: String)
 
 val SKINS_LIST = listOf(
-    SkinProfile("fox_officer", "Офицер Кицунэ"),
-    SkinProfile("estelle_cmd", "Командир Эстель"),
-    SkinProfile("luna_cat", "Лунная Кошка"),
-    SkinProfile("shadow_knight", "Теневой Рыцарь"),
-    SkinProfile("emerald_scout", "Следопыт"),
-    SkinProfile("classic", "Классика HD")
+    SkinProfile("chibi_classic",  "Чиби Белый"),
+    SkinProfile("chibi_scarf",    "Уютный Шарф"),
+    SkinProfile("chibi_santa",    "Санта-Чиби"),
+    SkinProfile("chibi_snowman",  "Снеговичок"),
+    SkinProfile("chibi_reindeer", "Оленёнок"),
+    SkinProfile("chibi_angel",    "Ангел"),
+    SkinProfile("chibi_valkyrie", "Валькирия"),
+    SkinProfile("chibi_beanie",   "Уют в Шапке"),
+    SkinProfile("chibi_witch",    "Лесная Ведьма"),
+    SkinProfile("chibi_music",    "Меломанка"),
+    SkinProfile("chibi_ninja",    "Ниндзя"),
+    SkinProfile("chibi_king",     "Король Чиби"),
+    SkinProfile("chibi_cool",     "Крутой в Очках"),
+    SkinProfile("chibi_fox",      "Лисёнок Кицунэ"),
+    SkinProfile("chibi_cat",      "Лунная Кошка"),
+    SkinProfile("chibi_bunny",    "Зайка"),
+    SkinProfile("chibi_frog",     "Лягушка-Худи"),
+    SkinProfile("chibi_knight",   "Рыцарь"),
+    SkinProfile("chibi_wizard",   "Звёздный Маг"),
+    SkinProfile("chibi_samurai",  "Самурай"),
+    SkinProfile("chibi_pirate",   "Пират"),
+    SkinProfile("chibi_astro",    "Космонавт"),
+    SkinProfile("chibi_robot",    "Пиксель-Бот"),
+    SkinProfile("chibi_ghost",    "Призрак"),
+    SkinProfile("chibi_demon",    "Демонёнок"),
+    SkinProfile("chibi_slime",    "Слайм-Чиби"),
+    SkinProfile("chibi_mushroom", "Грибочек"),
+    SkinProfile("chibi_chef",     "Шеф-Повар"),
+    SkinProfile("chibi_sakura",   "Дух Сакуры"),
+    SkinProfile("chibi_cyber",    "Кибер-Неон")
+)
+
+val EMOTES_LIST = listOf(
+    EmoteDef("wave",  "Привет"),
+    EmoteDef("peace", "Мир V"),
+    EmoteDef("guns",  "Пистолеты"),
+    EmoteDef("point", "Указать"),
+    EmoteDef("sit",   "Сесть"),
+    EmoteDef("dizzy", "X_X"),
+    EmoteDef("shy",   "Смущение"),
+    EmoteDef("angry", "Злость"),
+    EmoteDef("happy", "Смех ^^"),
+    EmoteDef("cry",   "Плач T_T"),
+    EmoteDef("cool",  "Крутой"),
+    EmoteDef("love",  "Сердце")
 )
 
 object SpriteArt {
@@ -29,6 +69,8 @@ object SpriteArt {
     lateinit var propsTex: Texture
     lateinit var props: Array<TextureRegion>
     lateinit var crackFrames: Array<TextureRegion>
+    lateinit var emoteIcons: Array<TextureRegion>
+    lateinit var emoteOverlays: Array<TextureRegion>
     lateinit var shadowTex: Texture
     lateinit var glowTex: Texture
     lateinit var slashTex: TextureRegion
@@ -159,13 +201,39 @@ object SpriteArt {
         val hTex = Texture(Gdx.files.internal("sprites_heroes.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
         }
+        val hCols = (hTex.width / 64).coerceAtLeast(1)
         val hFrames = (hTex.height / 80).coerceIn(4, 8)
         SKINS_LIST.forEachIndexed { idx, sk ->
+            val col = idx % hCols
             skinSprites[sk.id] = Array(8) { fr ->
                 val srcRow = if (hFrames >= 8) fr else when (fr) { 0, 1 -> 0; 2, 3 -> 1; 4, 5 -> 2; 6 -> 1; else -> 3 }
-                TextureRegion(hTex, idx * 64, srcRow * 80, 64, 80)
+                TextureRegion(hTex, col * 64, srcRow * 80, 64, 80)
             }
         }
+        // Обратная совместимость со старыми сохранениями: плавно переводим на новых чиби-героев!
+        val legacyMap = mapOf(
+            "fox_officer" to "chibi_fox",
+            "estelle_cmd" to "chibi_music",
+            "luna_cat" to "chibi_cat",
+            "shadow_knight" to "chibi_knight",
+            "emerald_scout" to "chibi_witch",
+            "classic" to "chibi_classic"
+        )
+        for ((oldId, newId) in legacyMap) {
+            skinSprites[newId]?.let { skinSprites[oldId] = it }
+        }
+
+        val emFile = Gdx.files.internal("emotes_v611.png")
+        emoteIcons = if (emFile.exists()) {
+            val eTex = Texture(emFile).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this }
+            Array(EMOTES_LIST.size) { i -> TextureRegion(eTex, i * 64, 0, 64, 64) }
+        } else Array(EMOTES_LIST.size) { TextureRegion(whitePx) }
+
+        val ovFile = Gdx.files.internal("emote_overlays_v611.png")
+        emoteOverlays = if (ovFile.exists()) {
+            val oTex = Texture(ovFile).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this }
+            Array(EMOTES_LIST.size) { i -> TextureRegion(oTex, i * 64, 0, 64, 80) }
+        } else Array(EMOTES_LIST.size) { TextureRegion(whitePx) }
 
         val mTex = Texture(Gdx.files.internal("sprites_mobs.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
@@ -252,6 +320,9 @@ object SpriteArt {
         }
         return makeTex(pm, linear = true)
     }
+
+    fun getSkinFrames(id: String): Array<TextureRegion> =
+        skinSprites[id] ?: skinSprites["chibi_scarf"] ?: skinSprites.values.first()
 
     fun dispose() { for (t in textures) t.dispose(); textures.clear() }
 }
