@@ -111,8 +111,13 @@ object VoiceChatEngine {
         }
         val rms = sqrt(sumSq / pcm.size).toFloat().coerceIn(0f, 1f)
         val st = peers.computeIfAbsent(peerId) { PeerVoiceStream() }
-        while (st.queue.size >= 6) st.queue.poll()
-        st.queue.add(pcm)
+        while (st.queue.size >= 8) st.queue.poll()
+        var off = 0
+        while (off < pcm.size) {
+            val end = min(pcm.size, off + FRAME_SAMPLES)
+            st.queue.add(if (off == 0 && end == pcm.size) pcm else pcm.copyOfRange(off, end))
+            off = end
+        }
         st.lastTalkMs = System.currentTimeMillis()
         st.level = min(1f, rms * 3.5f)
     }
@@ -151,6 +156,8 @@ object VoiceChatEngine {
 
                 rec.startRecording()
                 val rawBuf = ShortArray(FRAME_SAMPLES)
+                val mqttBatchBuf = ShortArray(FRAME_SAMPLES * 2)
+                var mqttBatchHalf = 0
                 var hangoverFrames = 0
 
                 while (captureRunning && enabled) {
@@ -179,14 +186,24 @@ object VoiceChatEngine {
                     localTransmitting = shouldSend
 
                     if (shouldSend && read == FRAME_SAMPLES) {
-                        val encoded = encodeAdpcm(rawBuf)
-                        if (testLoopback) {
-                            onIncomingVoicePacket("__loopback__", encoded)
-                        }
                         val g = gameRef
-                        if (g != null && g.netMp.isConnected) {
-                            g.netMp.broadcastVoice(encoded)
+                        if (testLoopback) {
+                            onIncomingVoicePacket("__loopback__", encodeAdpcm(rawBuf))
                         }
+                        if (g != null && g.netMp.isConnected) {
+                            if (g.netMp.isOnlineRelay) {
+                                System.arraycopy(rawBuf, 0, mqttBatchBuf, mqttBatchHalf * FRAME_SAMPLES, FRAME_SAMPLES)
+                                mqttBatchHalf++
+                                if (mqttBatchHalf >= 2) {
+                                    mqttBatchHalf = 0
+                                    g.netMp.broadcastVoice(encodeAdpcm(mqttBatchBuf))
+                                }
+                            } else {
+                                g.netMp.broadcastVoice(encodeAdpcm(rawBuf))
+                            }
+                        }
+                    } else {
+                        mqttBatchHalf = 0
                     }
                 }
                 try { rec.stop() } catch (_: Exception) {}

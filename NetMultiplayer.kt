@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.concurrent.thread
@@ -82,10 +83,16 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     private val clientStreams = CopyOnWriteArrayList<DataOutputStream>()
     private var clientOut: DataOutputStream? = null
 
-    // Online MQTT Relay state
+    // Online MQTT Relay state (with auto-reconnect + session generation guard!)
     private var mqttSocket: Socket? = null
     private var mqttOut: DataOutputStream? = null
     private var mqttTopic = ""
+    private val sessionGen = AtomicInteger(0)
+    @Volatile private var wantOnlineLoop = false
+    @Volatile var isReconnecting = false
+    @Volatile var activeBrokerName = ""
+    @Volatile private var lockedBrokerIdx = -1
+    @Volatile private var hostHeardOnBroker = false
     private val netSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-net-send").apply { isDaemon = true } }
     private val voiceSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-voice-send").apply { isDaemon = true } }
     private val voiceInFlight = AtomicBoolean(false)
@@ -147,102 +154,207 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     }
 
     private fun connectMqttRelay(code: String, asHost: Boolean) {
+        val myGen = sessionGen.incrementAndGet()
+        wantOnlineLoop = true
+        isReconnecting = false
+        lockedBrokerIdx = -1
+        hostHeardOnBroker = false
         mqttTopic = buildRoomTopic(code)
-        thread(isDaemon = true) {
-            var connectedBroker = ""
-            var sock: Socket? = null
-            // Try user-selected broker FIRST so both friends reliably hit the exact same server!
-            val ordered = listOf(ONLINE_BROKERS[selectedBrokerIdx.coerceIn(0, ONLINE_BROKERS.lastIndex)]) +
-                ONLINE_BROKERS.filterIndexed { idx, _ -> idx != selectedBrokerIdx }
-            for ((host, port) in ordered) {
-                try {
-                    val s = Socket()
-                    s.connect(InetSocketAddress(host, port), 4500)
-                    s.tcpNoDelay = true
-                    s.soTimeout = 0
-                    sock = s
-                    connectedBroker = host
-                    break
-                } catch (_: Exception) {}
-            }
-            if (sock == null) {
-                statusText = "Нет связи с облаком (проверьте интернет)"
-                isConnected = false; isOnlineRelay = false
-                return@thread
-            }
 
-            try {
-                mqttSocket = sock
-                val out = DataOutputStream(sock.getOutputStream())
-                val inp = DataInputStream(sock.getInputStream())
-                mqttOut = out
+        thread(isDaemon = true, name = "vh-mqtt-loop-$myGen") {
+            var attempt = 0
+            var probeStep = 0
+            var everConnected = false
+            var lastReconnectToastMs = 0L
 
-                // 1. MQTT v3.1.1 CONNECT
-                sendMqttConnect(out, "vh53_${localPeerId}")
-                val ackType = inp.readUnsignedByte()
-                val ackLen = readMqttVarInt(inp)
-                val ackBytes = ByteArray(ackLen); inp.readFully(ackBytes)
-                if ((ackType and 0xF0) != 0x20 || ackBytes.size < 2 || ackBytes[1].toInt() != 0) {
-                    throw RuntimeException("MQTT CONNACK rejected")
-                }
-
-                // 2. MQTT SUBSCRIBE to room topic
-                sendMqttSubscribe(out, 1, mqttTopic)
-                isConnected = true
-                statusText = if (asHost) "Онлайн Хост • Код: $code ($connectedBroker)" else "Онлайн в комнате #$code!"
-                game.showToast(if (asHost) "Онлайн-комната #$code открыта! Сообщите код другу." else "Подключено к комнате #$code!")
-
-                // Keepalive ping thread (25s)
-                thread(isDaemon = true) {
-                    while (isConnected && isOnlineRelay && !sock.isClosed) {
-                        try {
-                            Thread.sleep(25000)
-                            if (isConnected && isOnlineRelay) {
-                                synchronized(out) { out.writeByte(0xC0); out.writeByte(0x00); out.flush() }
-                            }
-                        } catch (_: Exception) { break }
+            while (wantOnlineLoop && sessionGen.get() == myGen) {
+                attempt++
+                val brokerList = if (lockedBrokerIdx in ONLINE_BROKERS.indices) {
+                    listOf(lockedBrokerIdx to ONLINE_BROKERS[lockedBrokerIdx])
+                } else {
+                    val startIdx = (selectedBrokerIdx + probeStep) % ONLINE_BROKERS.size
+                    val res = mutableListOf<Pair<Int, Pair<String, Int>>>()
+                    for (k in ONLINE_BROKERS.indices) {
+                        val bi = (startIdx + k) % ONLINE_BROKERS.size
+                        res += bi to ONLINE_BROKERS[bi]
                     }
+                    res
                 }
 
-                // If guest -> ask Host for mod manifest first (v6.13), with automatic fallback to old hosts!
-                if (!asHost) {
-                    modSyncState = ModSyncState.CHECKING
-                    modSyncStatusText = "Проверка модов хоста..."
-                    publishOnlinePacket { p -> p.writeByte(18); p.writeUTF(PlatformBridge.CURRENT_VERSION) } // MOD_HELLO_REQ
-                    thread(isDaemon = true) {
-                        try { Thread.sleep(2600) } catch (_: Exception) {}
-                        if (isConnected && !isHost && modSyncState == ModSyncState.CHECKING && !worldInitReceived) {
-                            modSyncState = ModSyncState.DONE
-                            sendJoinWorldRequest()
+                var connectedBroker = ""
+                var connectedIdx = selectedBrokerIdx
+                var sock: Socket? = null
+                for ((bIdx, pair) in brokerList) {
+                    if (!wantOnlineLoop || sessionGen.get() != myGen) break
+                    val (host, port) = pair
+                    try {
+                        val s = Socket()
+                        s.connect(InetSocketAddress(host, port), 4500)
+                        s.tcpNoDelay = true
+                        s.soTimeout = 35000 // 35s read timeout -> detects silent 4G NAT drops!
+                        sock = s
+                        connectedBroker = host
+                        connectedIdx = bIdx
+                        break
+                    } catch (_: Exception) {}
+                }
+
+                if (!wantOnlineLoop || sessionGen.get() != myGen) {
+                    try { sock?.close() } catch (_: Exception) {}
+                    break
+                }
+
+                if (sock == null) {
+                    isConnected = false
+                    isReconnecting = true
+                    statusText = "Нет связи с облаком — повтор #$attempt..."
+                    val delayMs = kotlin.math.min(5000L, 1500L + attempt * 500L)
+                    try { Thread.sleep(delayMs) } catch (_: Exception) {}
+                    continue
+                }
+
+                val curSock = sock
+                try {
+                    mqttSocket = curSock
+                    val out = DataOutputStream(curSock.getOutputStream())
+                    val inp = DataInputStream(curSock.getInputStream())
+                    mqttOut = out
+
+                    // 1. MQTT v3.1.1 CONNECT (KeepAlive = 45s, unique clientId per reconnect!)
+                    sendMqttConnect(out, "vh613_${localPeerId}_${attempt}")
+                    val ackType = inp.readUnsignedByte()
+                    val ackLen = readMqttVarInt(inp)
+                    val ackBytes = ByteArray(ackLen.coerceIn(0, 64))
+                    if (ackLen > 0) inp.readFully(ackBytes)
+                    if ((ackType and 0xF0) != 0x20 || ackBytes.size < 2 || ackBytes[1].toInt() != 0) {
+                        throw RuntimeException("MQTT CONNACK rejected")
+                    }
+
+                    // 2. MQTT SUBSCRIBE to room topic
+                    sendMqttSubscribe(out, 1, mqttTopic)
+                    selectedBrokerIdx = connectedIdx
+                    activeBrokerName = connectedBroker
+                    if (asHost) lockedBrokerIdx = connectedIdx
+                    hostHeardOnBroker = asHost
+                    isConnected = true
+                    isReconnecting = false
+
+                    val shortBrk = connectedBroker.substringBefore('.').ifBlank { connectedBroker }
+                    statusText = if (asHost) {
+                        "Онлайн Хост • Код: $code ($connectedBroker)"
+                    } else if (worldInitReceived) {
+                        "Онлайн #$code ($shortBrk)"
+                    } else {
+                        "Комната #$code ($shortBrk) • Поиск хоста..."
+                    }
+
+                    if (!everConnected) {
+                        everConnected = true
+                        game.showToast(if (asHost) "Онлайн-комната #$code открыта! ($shortBrk)" else "Подключено к #$code ($shortBrk)...")
+                    } else if (System.currentTimeMillis() - lastReconnectToastMs > 5000L) {
+                        lastReconnectToastMs = System.currentTimeMillis()
+                        game.showToast("Связь с комнатой #$code восстановлена!")
+                    }
+
+                    // Active 15s Keepalive PINGREQ thread (keeps 4G NAT alive & confirms broker health!)
+                    val pingAttempt = attempt
+                    thread(isDaemon = true, name = "vh-mqtt-ping-$myGen-$pingAttempt") {
+                        while (wantOnlineLoop && sessionGen.get() == myGen && isConnected && !curSock.isClosed) {
+                            try {
+                                Thread.sleep(15000)
+                                if (wantOnlineLoop && sessionGen.get() == myGen && isConnected && !curSock.isClosed) {
+                                    synchronized(out) { out.writeByte(0xC0); out.writeByte(0x00); out.flush() }
+                                }
+                            } catch (_: Exception) {
+                                try { curSock.close() } catch (_: Exception) {}
+                                break
+                            }
                         }
                     }
-                }
 
-                // 3. MQTT Receive Loop
-                while (isConnected && isOnlineRelay && !sock.isClosed) {
-                    val header = inp.readUnsignedByte()
-                    val remLen = readMqttVarInt(inp)
-                    val body = ByteArray(remLen)
-                    if (remLen > 0) inp.readFully(body)
+                    // Immediately announce our position on connect / reconnect!
+                    pushImmediateOwnPos()
 
-                    val pktType = header and 0xF0
-                    if (pktType == 0x30) { // PUBLISH
-                        val bis = DataInputStream(ByteArrayInputStream(body))
-                        val tLen = bis.readUnsignedShort()
-                        bis.skipBytes(tLen)
-                        val qos = (header ushr 1) and 0x03
-                        if (qos > 0) bis.skipBytes(2)
-                        val senderId = bis.readInt()
-                        if (senderId == localPeerId) continue // Ignore own echo!
-                        handleIncomingPayload(senderId.toString(), bis, asHost)
+                    // Guest Handshake + Retry + Auto-Broker Probe (if Host ended up on a different broker!)
+                    if (!asHost && !worldInitReceived) {
+                        modSyncState = ModSyncState.CHECKING
+                        modSyncStatusText = "Поиск хоста на $shortBrk..."
+                        thread(isDaemon = true, name = "vh-guest-handshake-$myGen-$pingAttempt") {
+                            try {
+                                Thread.sleep(220) // brief settle after SUBSCRIBE
+                                if (wantOnlineLoop && sessionGen.get() == myGen && isConnected && !worldInitReceived) {
+                                    publishOnlinePacket { p -> p.writeByte(18); p.writeUTF(PlatformBridge.CURRENT_VERSION) }
+                                }
+                                Thread.sleep(1300)
+                                if (wantOnlineLoop && sessionGen.get() == myGen && isConnected && !worldInitReceived && modSyncState == ModSyncState.CHECKING) {
+                                    publishOnlinePacket { p -> p.writeByte(18); p.writeUTF(PlatformBridge.CURRENT_VERSION) }
+                                }
+                                Thread.sleep(1500)
+                                if (wantOnlineLoop && sessionGen.get() == myGen && isConnected && !worldInitReceived && modSyncState == ModSyncState.CHECKING) {
+                                    // Fallback for pre-v6.13 Host (ask directly for WORLD_INIT)
+                                    sendJoinWorldRequest()
+                                }
+                                Thread.sleep(2000)
+                                // Still zero packets from Host on this broker? Auto-probe next broker in ONLINE_BROKERS!
+                                if (wantOnlineLoop && sessionGen.get() == myGen && isConnected && !worldInitReceived && !hostHeardOnBroker && lockedBrokerIdx < 0) {
+                                    probeStep = (probeStep + 1) % ONLINE_BROKERS.size
+                                    statusText = "Хост не найден на $shortBrk — пробуем другой сервер..."
+                                    try { curSock.close() } catch (_: Exception) {}
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+
+                    // 3. MQTT Receive Loop (per-packet try/catch so ONE bad packet NEVER drops the room!)
+                    while (wantOnlineLoop && sessionGen.get() == myGen && !curSock.isClosed) {
+                        val header = inp.readUnsignedByte()
+                        val remLen = readMqttVarInt(inp)
+                        if (remLen !in 0..(4 * 1024 * 1024)) throw RuntimeException("Неверный размер MQTT ($remLen)")
+                        val body = if (remLen > 0) ByteArray(remLen).also { inp.readFully(it) } else ByteArray(0)
+
+                        val pktType = header and 0xF0
+                        if (pktType == 0x30 && body.size >= 7) { // PUBLISH
+                            try {
+                                val bis = DataInputStream(ByteArrayInputStream(body))
+                                val tLen = bis.readUnsignedShort()
+                                if (tLen > body.size - 6) continue
+                                bis.skipBytes(tLen)
+                                val qos = (header ushr 1) and 0x03
+                                if (qos > 0) bis.skipBytes(2)
+                                if (bis.available() < 5) continue
+                                val senderId = bis.readInt()
+                                if (senderId == localPeerId) continue // Ignore own echo!
+                                if (!asHost) {
+                                    hostHeardOnBroker = true
+                                    lockedBrokerIdx = connectedIdx
+                                }
+                                handleIncomingPayload(senderId.toString(), bis, asHost)
+                            } catch (_: Exception) {
+                                // Ignore a single malformed/foreign packet — keep the MQTT link alive!
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (wantOnlineLoop && sessionGen.get() == myGen) {
+                        isReconnecting = true
+                        statusText = "Переподключение #$code (${e.javaClass.simpleName})..."
+                    }
+                } finally {
+                    try { curSock.close() } catch (_: Exception) {}
+                    if (sessionGen.get() == myGen) {
+                        isConnected = false
+                        mqttOut = null
                     }
                 }
-            } catch (e: Exception) {
-                if (isOnlineRelay) statusText = "Онлайн отключён: ${e.message ?: "разрыв"}"
-            } finally {
-                if (isOnlineRelay) {
-                    isConnected = false
-                    try { sock.close() } catch (_: Exception) {}
+
+                if (wantOnlineLoop && sessionGen.get() == myGen) {
+                    isReconnecting = true
+                    if (everConnected && System.currentTimeMillis() - lastReconnectToastMs > 8000L) {
+                        lastReconnectToastMs = System.currentTimeMillis()
+                        game.showToast("Связь с облаком прервалась — переподключаемся...")
+                    }
+                    val backoff = if (!asHost && !hostHeardOnBroker && lockedBrokerIdx < 0) 350L else 1800L
+                    try { Thread.sleep(backoff) } catch (_: Exception) {}
                 }
             }
         }
@@ -275,7 +387,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
         pOut.writeUTF("MQTT")
         pOut.writeByte(4)    // Protocol level 3.1.1
         pOut.writeByte(0x02) // Clean session
-        pOut.writeShort(60)  // KeepAlive 60s
+        pOut.writeShort(45)  // KeepAlive 45s
         pOut.writeUTF(clientId)
         val body = payload.toByteArray()
 
@@ -317,7 +429,17 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             writeMqttVarInt(pkt, body.size)
             pkt.write(body)
             synchronized(out) { out.write(pkt.toByteArray()); out.flush() }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            if (isOnlineRelay && wantOnlineLoop) {
+                try { mqttSocket?.close() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun pushImmediateOwnPos() {
+        if (!isConnected) return
+        val p = game.player
+        sendPos(p.x, p.y, p.z, p.facingRight, p.skinId, p.attackAnim, p.isSleeping, p.slots[p.selectedSlot]?.id ?: 0, p.hp, p.maxHp)
     }
 
     // =========================================================================
@@ -533,6 +655,18 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 if (atk > rp.attackAnim) rp.attackAnim = atk
                 rp.isSleeping = slp; rp.heldId = hId; rp.hp = rHp; rp.maxHp = rMaxHp
                 rp.lastSeenMs = System.currentTimeMillis()
+                if (asHost && !isOnlineRelay && clientStreams.size > 1) {
+                    for (o in clientStreams) if (o !== skipTcp) {
+                        try {
+                            synchronized(o) {
+                                o.writeByte(1); o.writeUTF(nick); o.writeUTF(skin)
+                                o.writeFloat(x); o.writeFloat(y); o.writeFloat(z)
+                                o.writeBoolean(fr); o.writeFloat(atk); o.writeBoolean(slp); o.writeInt(hId); o.writeFloat(rHp); o.writeFloat(rMaxHp)
+                                o.flush()
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
             }
             2 -> { // BLOCK
                 val x = inp.readInt(); val y = inp.readInt(); val z = inp.readInt(); val id = inp.readInt()
@@ -559,11 +693,15 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             }
             5 -> { // JOIN_REQ (Гость готов и просит мир у Хоста — работает и Онлайн, и LAN!)
                 if (asHost) {
-                    val initBytes = buildCompressedWorldInit()
-                    if (isOnlineRelay) {
-                        publishOnlinePacket { p -> p.writeByte(4); p.writeInt(initBytes.size); p.write(initBytes) }
-                    } else if (skipTcp != null) {
-                        try { synchronized(skipTcp) { skipTcp.writeByte(4); skipTcp.writeInt(initBytes.size); skipTcp.write(initBytes); skipTcp.flush() } } catch (_: Exception) {}
+                    modTransferExec.execute {
+                        if (!isConnected) return@execute
+                        val initBytes = buildCompressedWorldInit()
+                        if (isOnlineRelay) {
+                            publishOnlinePacket { p -> p.writeByte(4); p.writeInt(initBytes.size); p.write(initBytes) }
+                        } else if (skipTcp != null) {
+                            try { synchronized(skipTcp) { skipTcp.writeByte(4); skipTcp.writeInt(initBytes.size); skipTcp.write(initBytes); skipTcp.flush() } } catch (_: Exception) {}
+                        }
+                        pushImmediateOwnPos()
                     }
                 }
             }
@@ -646,7 +784,7 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             }
             18 -> { // MOD_HELLO_REQ (Гость запрашивает список активных модов хоста!)
                 inp.readUTF() // guestVersion
-                if (asHost) sendModManifestToHost(targetTcp = if (isOnlineRelay) null else skipTcp)
+                if (asHost) { sendModManifestToHost(targetTcp = if (isOnlineRelay) null else skipTcp); pushImmediateOwnPos() }
             }
             19 -> { // MOD_MANIFEST (Хост прислал список своих модов -> сверяем у Гостя!)
                 val hVer = inp.readUTF()
@@ -966,7 +1104,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     fun broadcastMobs(mobs: Collection<MobEntity>) {
         if (!isConnected || !isHost || remotePlayers.isEmpty()) return
         if (!mobsInFlight.compareAndSet(false, true)) return
-        val snap = mobs.take(24).map {
+        val maxMobs = if (isOnlineRelay) 16 else 24
+        val snap = mobs.take(maxMobs).map {
             MobSyncSnap(it.id, it.type, it.name, it.hostile, it.isBoss, it.x, it.y, it.z, it.hp, it.maxHp,
                 it.facingRight, it.walkAnim, it.attackAnim, it.hurtFlash, it.freezeTimer, it.stunTimer, it.tamed)
         }
@@ -1115,6 +1254,12 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     }
 
     fun stop() {
+        wantOnlineLoop = false
+        sessionGen.incrementAndGet()
+        isReconnecting = false
+        lockedBrokerIdx = -1
+        hostHeardOnBroker = false
+        activeBrokerName = ""
         isHost = false; isConnected = false; isOnlineRelay = false; roomCode = ""
         worldInitReceived = false; modSyncState = ModSyncState.IDLE
         missingHostMods = emptyList(); hostManifestMods = emptyList()

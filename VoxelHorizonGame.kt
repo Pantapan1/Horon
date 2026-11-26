@@ -397,7 +397,9 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
             player.x = hx + 1.1f; player.y = hy; player.z = hz; player.isSleeping = false
             manualLayerOffset = 0; emotePickerOpen = false; lastFogGx = Int.MIN_VALUE; lastFogGy = Int.MIN_VALUE
             camWorld.position.set(isoToScreenX(player.x, player.y), isoToScreenY(player.x, player.y, player.z), 0f)
+            mpHeartbeatTimer = 10f; lastSentX = -9999f
             screen = UiScreen.PLAYING
+            netMp.pushImmediateOwnPos()
             showToast("Мир Хоста синхронизирован! (День $dayCnt)")
         }
     }
@@ -1904,24 +1906,30 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
                     if (player.food >= 16f && player.hp < player.maxHp) player.hp = min(player.maxHp, player.hp + 1f)
                 }
             }
-            if (netMp.isConnected) {
-                netMp.interpolateRemotePlayers(dt)
-                mpPosTimer += dt
-                mpHeartbeatTimer += dt
-                val movedEnough = abs(player.x - lastSentX) + abs(player.y - lastSentY) + abs(player.z - lastSentZ) > 0.03f || player.attackAnim > 0.1f
-                if ((mpPosTimer >= 0.066f && movedEnough) || mpHeartbeatTimer >= 0.45f) {
-                    mpPosTimer = 0f; mpHeartbeatTimer = 0f
-                    lastSentX = player.x; lastSentY = player.y; lastSentZ = player.z
-                    netMp.sendPos(player.x, player.y, player.z, player.facingRight, player.skinId, player.attackAnim, player.isSleeping, player.slots[player.selectedSlot]?.id ?: 0, player.hp, player.maxHp)
-                }
-                if (netMp.isHost && netMp.remotePlayers.isNotEmpty()) {
-                    mpTimeSyncTimer += dt
-                    if (mpTimeSyncTimer >= 3.0f) { mpTimeSyncTimer = 0f; netMp.broadcastTime(entities.dayCount, entities.worldTime) }
-                    mpMobSyncTimer += dt
-                    if (mpMobSyncTimer >= 0.16f) { mpMobSyncTimer = 0f; netMp.broadcastMobs(entities.mobs) }
-                    mpDropSyncTimer += dt
-                    if (mpDropSyncTimer >= 0.45f) { mpDropSyncTimer = 0f; netMp.broadcastDrops(entities.drops) }
-                }
+        }
+
+        // Синхронизация мультиплеера работает на ВСЕХ экранах мира (даже в Паузе, Инвентаре, Мультиплеере и окнах модов!)
+        if (netMp.isConnected && world.worldActive && screen !in setOf(UiScreen.MAIN_MENU, UiScreen.WORLD_SLOTS, UiScreen.MOD_SYNC_PROMPT)) {
+            netMp.interpolateRemotePlayers(dt)
+            mpPosTimer += dt
+            mpHeartbeatTimer += dt
+            val posMinDt = if (netMp.isOnlineRelay) 0.11f else 0.066f
+            val hbDt = if (netMp.isOnlineRelay) 0.70f else 0.45f
+            val movedEnough = abs(player.x - lastSentX) + abs(player.y - lastSentY) + abs(player.z - lastSentZ) > 0.04f || player.attackAnim > 0.1f
+            if ((mpPosTimer >= posMinDt && movedEnough) || mpHeartbeatTimer >= hbDt) {
+                mpPosTimer = 0f; mpHeartbeatTimer = 0f
+                lastSentX = player.x; lastSentY = player.y; lastSentZ = player.z
+                netMp.sendPos(player.x, player.y, player.z, player.facingRight, player.skinId, player.attackAnim, player.isSleeping, player.slots[player.selectedSlot]?.id ?: 0, player.hp, player.maxHp)
+            }
+            if (netMp.isHost && netMp.remotePlayers.isNotEmpty()) {
+                mpTimeSyncTimer += dt
+                if (mpTimeSyncTimer >= 4.0f) { mpTimeSyncTimer = 0f; netMp.broadcastTime(entities.dayCount, entities.worldTime) }
+                mpMobSyncTimer += dt
+                val mobDt = if (netMp.isOnlineRelay) 0.35f else 0.16f
+                if (mpMobSyncTimer >= mobDt) { mpMobSyncTimer = 0f; netMp.broadcastMobs(entities.mobs) }
+                mpDropSyncTimer += dt
+                val dropDt = if (netMp.isOnlineRelay) 0.90f else 0.45f
+                if (mpDropSyncTimer >= dropDt) { mpDropSyncTimer = 0f; netMp.broadcastDrops(entities.drops) }
             }
         }
 
@@ -2920,7 +2928,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val hdrH = ph * 0.14f
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        drawFitTextBatch(fontSmall, "Rust Engine v6.13 • Авто-моды + Голос", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
+        drawFitTextBatch(fontSmall, "Rust Engine v6.13.1 • Стабильный Онлайн", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color(1f, 0.90f, 0.48f, 1f)
         drawFitTextBatch(fontSmall, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 18f, py + ph - hdrH * 0.96f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color.WHITE
@@ -3567,7 +3575,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val hours = ((entities.worldTime * 24f + 6f) % 24f).toInt()
         val mins = (((entities.worldTime * 24f + 6f) % 1f) * 60f).toInt()
         val clock = "%02d:%02d".format(hours, mins)
-        val roomTag = if (netMp.isConnected && netMp.roomCode.isNotEmpty()) " | Код:${netMp.roomCode}" else ""
+        val roomTag = when {
+            netMp.isReconnecting && netMp.roomCode.isNotEmpty() -> " | Переподкл.#${netMp.roomCode}..."
+            netMp.isConnected && netMp.roomCode.isNotEmpty() -> " | Код:${netMp.roomCode} (${netMp.remotePlayers.size + 1} игр.)"
+            else -> ""
+        }
         val fps = Gdx.graphics.framesPerSecond
         val infoTxt = "${fps} FPS (Rust) | Z:${player.z.toInt()}/250 | $placeTag | Дн.${entities.seasonDay()}/${entities.seasonLengthDays} ${entities.season.ruName} $clock ${tempC}°C$roomTag"
         glyphLayout.setText(fontSmall, infoTxt)
@@ -4110,7 +4122,11 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         // Инфо-плашка снизу (как в Концепте 1!)
         val footH = max(36f, by - (py + 14f) - 8f)
         drawThemedPanel(SpriteArt.oceanSlotPatch, bx, py + 12f, bw, footH)
-        val roomInfo = if (netMp.isConnected) "Онлайн • Код: ${netMp.roomCode} • Игроков: ${netMp.remotePlayers.size + 1}" else "Мир: $currentWorldTitle • День ${entities.dayCount} (${entities.season.ruName})"
+        val roomInfo = when {
+            netMp.isReconnecting -> "Переподключение к комнате #${netMp.roomCode}..."
+            netMp.isConnected -> "Онлайн • Код: ${netMp.roomCode} • Игроков: ${netMp.remotePlayers.size + 1}"
+            else -> "Мир: $currentWorldTitle • День ${entities.dayCount} (${entities.season.ruName})"
+        }
         drawCenteredText(fontSmall, roomInfo, bx, py + 12f, bw, footH)
     }
 
