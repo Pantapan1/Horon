@@ -1,4 +1,4 @@
-name: Build VoxelHorizon Rust Engine v6.11 APK (Mega Update)
+name: Build VoxelHorizon Rust Engine v6.12 APK (Mega Update)
 
 on:
   push:
@@ -54,8 +54,8 @@ jobs:
           [ -f "voxelhorizon.jks" ] && cp -f voxelhorizon.jks app/voxelhorizon.jks
           cp -f AndroidManifest.xml app/src/main/AndroidManifest.xml
 
-          # All Kotlin sources (explicit list v6.11)
-          for kt in AndroidLauncher.kt PlatformBridge.kt ProfileManager.kt SoundFx.kt RedstoneSystem.kt NoCodeModStudio.kt ModAudioEngine.kt RustEngine.kt BlockRegistry.kt SpriteArt.kt WorldIso.kt EntitiesIso.kt LuaModEngine.kt NetMultiplayer.kt VoxelHorizonGame.kt; do
+          # All Kotlin sources (explicit list v6.12)
+          for kt in AndroidLauncher.kt PlatformBridge.kt ProfileManager.kt SoundFx.kt RedstoneSystem.kt NoCodeModStudio.kt ModAudioEngine.kt VoiceChatEngine.kt RustEngine.kt BlockRegistry.kt SpriteArt.kt WorldIso.kt EntitiesIso.kt LuaModEngine.kt NetMultiplayer.kt VoxelHorizonGame.kt; do
             [ -f "$kt" ] && cp -f "$kt" app/src/main/java/com/voxelhorizon/nativegame/
           done
 
@@ -85,15 +85,15 @@ jobs:
       - name: Compile Android APK with Rust Engine
         run: |
           gradle assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk VoxelHorizon-Rust-v6.11.apk
-          ls -lh VoxelHorizon-Rust-v6.11.apk
+          cp app/build/outputs/apk/debug/app-debug.apk VoxelHorizon-Rust-v6.12.apk
+          ls -lh VoxelHorizon-Rust-v6.12.apk
 
       - name: Publish direct APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v6.11-rust-latest
-          name: VoxelHorizon Rust Engine v6.11 APK (Mega Update)
-          files: VoxelHorizon-Rust-v6.11.apk
+          tag_name: v6.12-rust-latest
+          name: VoxelHorizon Rust Engine v6.12 APK (Mega Update)
+          files: VoxelHorizon-Rust-v6.12.apk
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
