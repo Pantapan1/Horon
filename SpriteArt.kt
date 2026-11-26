@@ -50,6 +50,27 @@ object SpriteArt {
     lateinit var joyRingReg: TextureRegion
     lateinit var joyKnobReg: TextureRegion
 
+    // v6.9 Concept UI Themes (Backpack, Parchment, Golden Shop, Medieval Warp, Ocean HUD, Mod Studio!)
+    lateinit var backpackPanelPatch: NinePatch
+    lateinit var parchmentPatch: NinePatch
+    lateinit var woodSlotPatch: NinePatch
+    lateinit var goldShopPanelPatch: NinePatch
+    lateinit var goldSlotPatch: NinePatch
+    lateinit var woodBannerPatch: NinePatch
+    lateinit var oceanSlotPatch: NinePatch
+    lateinit var oceanSlotSelPatch: NinePatch
+    lateinit var oceanPanelPatch: NinePatch
+    lateinit var oceanBtnBluePatch: NinePatch
+    lateinit var oceanBtnMintPatch: NinePatch
+    lateinit var goldBtnPatch: NinePatch
+    lateinit var crimsonBtnPatch: NinePatch
+    lateinit var leatherBtnPatch: NinePatch
+    lateinit var blueprintPanelPatch: NinePatch
+    lateinit var blueprintSlotPatch: NinePatch
+
+    lateinit var hudIcons: Array<TextureRegion> // 0=heartF, 1=heartH, 2=heartE, 3=armF, 4=armE, 5=foodF, 6=foodE, 7=coin
+    lateinit var warpCards: Array<TextureRegion> // 0=overworld, 1=sakura/camp, 2=nether, 3=aether
+
     fun init() {
         textures.clear(); skinSprites.clear(); mobSprites.clear()
 
@@ -94,6 +115,46 @@ object SpriteArt {
         barFramePatch     = np(2, 1, 6)
         joyRingReg        = TextureRegion(uiTex, 3 * 64, 64, 64, 64)
         joyKnobReg        = TextureRegion(uiTex, 4 * 64, 64, 64, 64)
+
+        val thFile = Gdx.files.internal("ui_theme_v69.png")
+        if (thFile.exists()) {
+            val thTex = Texture(thFile).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this }
+            fun tp(c: Int, r: Int, b: Int = 10) = NinePatch(TextureRegion(thTex, c * 64, r * 64, 64, 64), b, b, b, b)
+            backpackPanelPatch  = tp(0, 0, 12)
+            parchmentPatch      = tp(1, 0, 10)
+            woodSlotPatch       = tp(2, 0, 8)
+            goldShopPanelPatch  = tp(3, 0, 12)
+            goldSlotPatch       = tp(4, 0, 8)
+            woodBannerPatch     = tp(5, 0, 10)
+            oceanSlotPatch      = tp(6, 0, 8)
+            oceanSlotSelPatch   = tp(7, 0, 8)
+            oceanPanelPatch     = tp(0, 1, 12)
+            oceanBtnBluePatch   = tp(1, 1, 10)
+            oceanBtnMintPatch   = tp(2, 1, 10)
+            goldBtnPatch        = tp(3, 1, 10)
+            crimsonBtnPatch     = tp(4, 1, 10)
+            leatherBtnPatch     = tp(5, 1, 10)
+            blueprintPanelPatch = tp(6, 1, 12)
+            blueprintSlotPatch  = tp(7, 1, 8)
+        } else {
+            backpackPanelPatch = panelPatch; parchmentPatch = panelPatch; woodSlotPatch = slotPatch
+            goldShopPanelPatch = panelPatch; goldSlotPatch = slotPatch; woodBannerPatch = panelPatch
+            oceanSlotPatch = slotPatch; oceanSlotSelPatch = slotSelectedPatch; oceanPanelPatch = panelPatch
+            oceanBtnBluePatch = btnBluePatch; oceanBtnMintPatch = btnGreenPatch; goldBtnPatch = btnPurplePatch
+            crimsonBtnPatch = btnRedPatch; leatherBtnPatch = btnPurplePatch; blueprintPanelPatch = panelPatch; blueprintSlotPatch = slotPatch
+        }
+
+        val hiFile = Gdx.files.internal("hud_icons_v69.png")
+        hudIcons = if (hiFile.exists()) {
+            val hiTex = Texture(hiFile).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this }
+            Array(8) { i -> TextureRegion(hiTex, i * 32, 0, 32, 32) }
+        } else Array(8) { TextureRegion(whitePx) }
+
+        val wcFile = Gdx.files.internal("warp_cards_v69.png")
+        warpCards = if (wcFile.exists()) {
+            val wcTex = Texture(wcFile).apply { setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this }
+            Array(4) { i -> TextureRegion(wcTex, i * 128, 0, 128, 192) }
+        } else Array(4) { TextureRegion(whitePx) }
 
         val hTex = Texture(Gdx.files.internal("sprites_heroes.png")).apply {
             setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest); textures += this
