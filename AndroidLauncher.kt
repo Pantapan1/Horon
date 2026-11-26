@@ -35,6 +35,7 @@ object GamepadBridge {
 class AndroidLauncher : AndroidApplication() {
     companion object {
         private const val REQ_PICK_IMPORT_FILE = 902
+        private const val REQ_RECORD_AUDIO = 903
     }
 
     private var gameInstance: VoxelHorizonGame? = null
@@ -90,6 +91,21 @@ class AndroidLauncher : AndroidApplication() {
                 }
             }
         }
+        PlatformBridge.onRequestMicPermission = {
+            runOnUiThread {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                    PlatformBridge.dispatchMicPermissionResult(true)
+                } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    PlatformBridge.dispatchMicPermissionResult(true)
+                } else {
+                    try {
+                        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_RECORD_AUDIO)
+                    } catch (_: Exception) {
+                        PlatformBridge.dispatchMicPermissionResult(false)
+                    }
+                }
+            }
+        }
 
         // Если игру открыли тапом по .vhworld / .vhmod / .lua / .vhpack в мессенджере или проводнике!
         intent?.let { PlatformBridge.handleIncomingIntent(this, it, activeStorageRoot) }
@@ -132,6 +148,14 @@ class AndroidLauncher : AndroidApplication() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK_IMPORT_FILE && resultCode == RESULT_OK && data?.data != null && ::activeStorageRoot.isInitialized) {
             PlatformBridge.handleIncomingUri(this, data.data!!, activeStorageRoot)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_RECORD_AUDIO) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            PlatformBridge.dispatchMicPermissionResult(granted)
         }
     }
 

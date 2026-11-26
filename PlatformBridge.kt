@@ -12,7 +12,9 @@ import android.content.ClipboardManager
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
@@ -42,8 +44,8 @@ data class ImportedFileEvent(
 )
 
 object PlatformBridge {
-    const val CURRENT_VERSION = "6.11.0"
-    const val CURRENT_TAG = "v6.11-rust-latest"
+    const val CURRENT_VERSION = "6.12.0"
+    const val CURRENT_TAG = "v6.12-rust-latest"
     const val REPO_API_LATEST = "https://api.github.com/repos/Pantapan1/Horon/releases/latest"
     const val REPO_RELEASES_URL = "https://github.com/Pantapan1/Horon/releases"
     const val PROVIDER_AUTHORITY = "com.voxelhorizon.nativegame.apkprovider"
@@ -55,6 +57,32 @@ object PlatformBridge {
     @Volatile var storageRootDir: File? = null
     @Volatile var onBeforeUpdateCallback: (() -> Unit)? = null
     @Volatile var onPickFileRequest: (() -> Unit)? = null
+    @Volatile var onRequestMicPermission: (() -> Unit)? = null
+    @Volatile private var pendingMicCallback: ((Boolean) -> Unit)? = null
+
+    fun hasMicPermission(): Boolean {
+        val ctx = appContext ?: return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return try {
+            ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        } catch (_: Exception) { false }
+    }
+
+    fun requestMicPermission(onResult: (Boolean) -> Unit) {
+        if (hasMicPermission()) {
+            onResult(true)
+            return
+        }
+        pendingMicCallback = onResult
+        val req = onRequestMicPermission
+        if (req != null) req.invoke() else dispatchMicPermissionResult(false)
+    }
+
+    fun dispatchMicPermissionResult(granted: Boolean) {
+        val cb = pendingMicCallback
+        pendingMicCallback = null
+        cb?.invoke(granted)
+    }
 
     val pendingImports = ConcurrentLinkedQueue<ImportedFileEvent>()
 

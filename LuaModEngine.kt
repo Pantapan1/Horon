@@ -194,6 +194,8 @@ class LuaModEngine(private val modsDir: File, private val game: VoxelHorizonGame
         game.baseWalkSpeed = 3.35f
         if (game.screen == UiScreen.MOD_CUSTOM_UI) game.screen = UiScreen.PLAYING
         ModAudioEngine.stopSeq()
+        VoiceChatEngine.stopAll()
+        VoiceChatEngine.attachGame(game)
 
         // Dispose previously loaded mod textures safely on GL thread
         val oldTextures = modTextures.values.toList()
@@ -747,6 +749,117 @@ class LuaModEngine(private val modsDir: File, private val game: VoxelHorizonGame
             }
         })
         vh.set("audio", audio)
+
+        // === VH.voice — VOICE CHAT BRIDGE (MIC PERMISSION, IMA-ADPCM & 3D PROXIMITY) ===
+        val voice = LuaTable()
+        voice.set("hasMic", object : ZeroArgFunction() {
+            override fun call(): LuaValue = LuaValue.valueOf(PlatformBridge.hasMicPermission())
+        })
+        voice.set("requestMic", object : OneArgFunction() {
+            override fun call(cb: LuaValue): LuaValue {
+                PlatformBridge.requestMicPermission { granted ->
+                    if (granted) VoiceChatEngine.ensureCaptureIfPermitted()
+                    Gdx.app.postRunnable {
+                        if (cb.isfunction()) {
+                            try { cb.call(LuaValue.valueOf(granted)) } catch (_: Exception) {}
+                        }
+                    }
+                }
+                return LuaValue.NIL
+            }
+        })
+        voice.set("enable", object : OneArgFunction() {
+            override fun call(b: LuaValue): LuaValue {
+                if (b.toboolean()) VoiceChatEngine.start(game) else VoiceChatEngine.stopAll()
+                return LuaValue.valueOf(VoiceChatEngine.enabled)
+            }
+        })
+        voice.set("isEnabled", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.enabled) })
+        voice.set("setTalking", object : OneArgFunction() {
+            override fun call(b: LuaValue): LuaValue {
+                VoiceChatEngine.talking = b.toboolean()
+                if (VoiceChatEngine.talking) VoiceChatEngine.ensureCaptureIfPermitted()
+                return LuaValue.NIL
+            }
+        })
+        voice.set("isTalking", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.talking) })
+        voice.set("setOpenMic", object : OneArgFunction() {
+            override fun call(b: LuaValue): LuaValue {
+                VoiceChatEngine.openMic = b.toboolean()
+                if (VoiceChatEngine.openMic) VoiceChatEngine.ensureCaptureIfPermitted()
+                return LuaValue.NIL
+            }
+        })
+        voice.set("isOpenMic", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.openMic) })
+        voice.set("setVadThreshold", object : OneArgFunction() {
+            override fun call(v: LuaValue): LuaValue { VoiceChatEngine.vadThreshold = v.tofloat().coerceIn(0.01f, 0.45f); return LuaValue.NIL }
+        })
+        voice.set("getVadThreshold", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.vadThreshold.toDouble()) })
+        voice.set("setDeafened", object : OneArgFunction() {
+            override fun call(b: LuaValue): LuaValue { VoiceChatEngine.deafened = b.toboolean(); return LuaValue.NIL }
+        })
+        voice.set("isDeafened", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.deafened) })
+        voice.set("setProximity", object : TwoArgFunction() {
+            override fun call(on: LuaValue, range: LuaValue): LuaValue {
+                VoiceChatEngine.proximityEnabled = on.toboolean()
+                if (!range.isnil()) VoiceChatEngine.proximityRange = range.tofloat().coerceIn(6f, 64f)
+                return LuaValue.NIL
+            }
+        })
+        voice.set("isProximity", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.proximityEnabled) })
+        voice.set("getRange", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.proximityRange.toDouble()) })
+        voice.set("setMasterVolume", object : OneArgFunction() {
+            override fun call(v: LuaValue): LuaValue { VoiceChatEngine.masterVolume = v.tofloat().coerceIn(0f, 1.8f); return LuaValue.NIL }
+        })
+        voice.set("getMasterVolume", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.masterVolume.toDouble()) })
+        voice.set("setMicGain", object : OneArgFunction() {
+            override fun call(v: LuaValue): LuaValue { VoiceChatEngine.micGain = v.tofloat().coerceIn(0.4f, 3.0f); return LuaValue.NIL }
+        })
+        voice.set("getMicGain", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.micGain.toDouble()) })
+        voice.set("setLoopback", object : OneArgFunction() {
+            override fun call(b: LuaValue): LuaValue {
+                VoiceChatEngine.testLoopback = b.toboolean()
+                if (VoiceChatEngine.testLoopback) {
+                    if (!VoiceChatEngine.enabled) VoiceChatEngine.start(game)
+                    VoiceChatEngine.ensureCaptureIfPermitted()
+                }
+                return LuaValue.NIL
+            }
+        })
+        voice.set("isLoopback", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.testLoopback) })
+        voice.set("getLocalLevel", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.localMicLevel.toDouble()) })
+        voice.set("isLocalTransmitting", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.localTransmitting) })
+        voice.set("getError", object : ZeroArgFunction() { override fun call(): LuaValue = LuaValue.valueOf(VoiceChatEngine.lastError) })
+        voice.set("isPeerTalking", object : OneArgFunction() { override fun call(id: LuaValue): LuaValue = LuaValue.valueOf(VoiceChatEngine.isPeerTalking(id.checkjstring())) })
+        voice.set("setPeerMuted", object : TwoArgFunction() {
+            override fun call(id: LuaValue, m: LuaValue): LuaValue { VoiceChatEngine.peerMuted[id.checkjstring()] = m.toboolean(); return LuaValue.NIL }
+        })
+        voice.set("setPeerVolume", object : TwoArgFunction() {
+            override fun call(id: LuaValue, v: LuaValue): LuaValue { VoiceChatEngine.peerVolumes[id.checkjstring()] = v.tofloat().coerceIn(0f, 2.0f); return LuaValue.NIL }
+        })
+        voice.set("getPeers", object : ZeroArgFunction() {
+            override fun call(): LuaValue {
+                val list = LuaTable()
+                var idx = 1
+                for ((pid, rp) in game.netMp.remotePlayers) {
+                    val row = LuaTable()
+                    val dist = kotlin.math.hypot((rp.x - game.player.x).toDouble(), (rp.y - game.player.y).toDouble())
+                    row.set("id", pid)
+                    row.set("nick", rp.nick)
+                    row.set("x", rp.x.toDouble())
+                    row.set("y", rp.y.toDouble())
+                    row.set("z", rp.z.toDouble())
+                    row.set("dist", dist)
+                    row.set("talking", LuaValue.valueOf(VoiceChatEngine.isPeerTalking(pid)))
+                    row.set("level", VoiceChatEngine.getPeerLevel(pid).toDouble())
+                    row.set("muted", LuaValue.valueOf(VoiceChatEngine.peerMuted[pid] == true))
+                    row.set("vol", (VoiceChatEngine.peerVolumes[pid] ?: 1.0f).toDouble())
+                    list.set(idx++, row)
+                }
+                return list
+            }
+        })
+        vh.set("voice", voice)
 
         // === VH.engine — UNRESTRICTED DIRECT LIVE ACCESS TO THE ENTIRE GAME ENGINE! ===
         val eng = LuaTable()

@@ -76,6 +76,8 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
     private var mqttOut: DataOutputStream? = null
     private var mqttTopic = ""
     private val netSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-net-send").apply { isDaemon = true } }
+    private val voiceSendExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vh-voice-send").apply { isDaemon = true } }
+    private val voiceInFlight = AtomicBoolean(false)
     private val posInFlight = AtomicBoolean(false)
     private val mobsInFlight = AtomicBoolean(false)
     private val dropsInFlight = AtomicBoolean(false)
@@ -585,6 +587,15 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
                 }
                 if (asHost && !isOnlineRelay) broadcastEmote(emIdx, skip = skipTcp)
             }
+            17 -> { // VOICE_FRAME (4-bit IMA-ADPCM голосовой пакет для модов!)
+                val vLen = inp.readUnsignedShort()
+                if (vLen in 1..2048) {
+                    val vData = ByteArray(vLen)
+                    inp.readFully(vData)
+                    VoiceChatEngine.onIncomingVoicePacket(peerKey, vData)
+                    if (asHost && !isOnlineRelay) broadcastVoice(vData, skip = skipTcp)
+                }
+            }
         }
     }
 
@@ -777,6 +788,31 @@ class NetMultiplayer(private val game: VoxelHorizonGame) {
             else {
                 val targets = if (isHost) clientStreams else listOfNotNull(clientOut)
                 for (o in targets) if (o !== skip) try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun broadcastVoice(frame: ByteArray, skip: DataOutputStream? = null) {
+        if (!isConnected || frame.isEmpty() || frame.size > 2048) return
+        if (skip == null && !voiceInFlight.compareAndSet(false, true)) return
+        voiceSendExec.execute {
+            try {
+                if (!isConnected) return@execute
+                val writer: (DataOutputStream) -> Unit = { p ->
+                    p.writeByte(17)
+                    p.writeShort(frame.size)
+                    p.write(frame)
+                }
+                if (isOnlineRelay) {
+                    publishOnlinePacket(writer)
+                } else {
+                    val targets = if (isHost) clientStreams else listOfNotNull(clientOut)
+                    for (o in targets) if (o !== skip) {
+                        try { synchronized(o) { writer(o); o.flush() } } catch (_: Exception) {}
+                    }
+                }
+            } finally {
+                if (skip == null) voiceInFlight.set(false)
             }
         }
     }

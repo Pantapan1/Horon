@@ -2917,7 +2917,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
         val hdrH = ph * 0.14f
         spriteBatch.projectionMatrix = camUI.combined
         spriteBatch.begin()
-        drawFitTextBatch(fontSmall, "Rust Engine v6.11 • 30 Чиби + Эмоции", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
+        drawFitTextBatch(fontSmall, "Rust Engine v6.12 • Voice API + 30 Чиби", px + 18f, py + ph - hdrH * 0.50f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color(1f, 0.90f, 0.48f, 1f)
         drawFitTextBatch(fontSmall, "${pr.nick} (${pr.friendId}) • Ур.${pr.totalLevel()}", px + 18f, py + ph - hdrH * 0.96f, pw - 36f, hdrH * 0.42f, centered = false)
         fontSmall.color = Color.WHITE
@@ -5388,7 +5388,7 @@ class VoxelHorizonGame(private val storageRoot: File) : ApplicationAdapter() {
 
     override fun dispose() {
         netMp.stop(); bgMusic?.dispose()
-        ModAudioEngine.dispose(); luaMods.dispose(); SoundFx.dispose(); BlockRegistry.dispose(); SpriteArt.dispose()
+        VoiceChatEngine.dispose(); ModAudioEngine.dispose(); luaMods.dispose(); SoundFx.dispose(); BlockRegistry.dispose(); SpriteArt.dispose()
         if (::minimapTex.isInitialized) minimapTex.dispose()
         if (::minimapPixmap.isInitialized) minimapPixmap.dispose()
         spriteBatch.dispose(); shapeRenderer.dispose()
